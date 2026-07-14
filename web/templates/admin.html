@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>관리자 · 경매 로그</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="page-title" style="text-align:left"><h1 style="font-size:28px">🔒 관리자 · 경매 로그</h1></div>
+
+    {% if setup_needed %}
+      <div class="card">
+        <h2><span class="num">!</span> 디스코드 로그인 설정이 필요합니다</h2>
+        <p class="small">관리자 인증(디스코드 OAuth)을 위해 아래 환경변수를 설정하세요.</p>
+        <pre class="small" style="background:var(--field);padding:14px;border-radius:10px;overflow:auto">DISCORD_CLIENT_ID=&lt;내전봇 애플리케이션 Client ID&gt;
+DISCORD_CLIENT_SECRET=&lt;Client Secret&gt;
+PUBLIC_BASE_URL=https://arenamatch.p-e.kr
+# (선택) ADMIN_DISCORD_IDS=1505506970361139210,1517544497817583739</pre>
+        <p class="small">그리고 디스코드 개발자 포털 → OAuth2 → Redirects 에
+          <b>https://arenamatch.p-e.kr/auth/callback</b> 을 등록하세요.</p>
+      </div>
+    {% elif denied %}
+      <div class="card center">
+        <h2 style="justify-content:center">🚫 접근 권한 없음</h2>
+        <p class="small">{{ who }} 님은 관리자가 아닙니다. 관리자 계정으로 로그인하세요.</p>
+        <div class="actions" style="max-width:320px;margin:16px auto 0">
+          <a class="btn ghost" href="/auth/logout" style="text-decoration:none">다른 계정으로 로그인</a>
+        </div>
+      </div>
+    {% elif admin %}
+      <div class="card">
+        <div class="row-between">
+          <div class="small">로그인: <b style="color:var(--gold2)">{{ uname }}</b> (관리자)</div>
+          <a class="btn ghost small" href="/auth/logout" style="text-decoration:none">로그아웃</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="num">◆</span> 경매 목록</h2>
+        <div id="list"><p class="small">불러오는 중…</p></div>
+      </div>
+
+      <div class="card" id="logCard" style="display:none">
+        <div class="row-between">
+          <h2 id="logTitle" style="margin:0"><span class="num">📜</span> 입찰 로그</h2>
+          <button class="btn ghost small" id="closeLog">닫기</button>
+        </div>
+        <div id="log" class="mt"></div>
+      </div>
+    {% else %}
+      <div class="card center">
+        <h2 style="justify-content:center">관리자 로그인</h2>
+        <p class="small">경매 로그는 관리자만 열람할 수 있습니다.</p>
+        <div class="actions" style="max-width:340px;margin:16px auto 0">
+          <a class="btn primary" href="/auth/login" style="text-decoration:none">디스코드로 로그인</a>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="center mt"><a href="/">← 홈으로</a></div>
+  </div>
+
+  {% if admin %}
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fmt = (n) => (n || 0).toLocaleString();
+    const phaseKo = { lobby: "대기", bidding: "진행중", sold: "진행중", finished: "종료" };
+
+    async function loadList() {
+      const r = await fetch("/api/admin/auctions");
+      if (!r.ok) { $("list").innerHTML = "<p class='small'>불러오기 실패</p>"; return; }
+      const { auctions } = await r.json();
+      if (!auctions.length) { $("list").innerHTML = "<p class='small'>진행 중이거나 완료된 경매가 없습니다.</p>"; return; }
+      $("list").innerHTML = "";
+      auctions.forEach((a) => {
+        const d = document.createElement("div");
+        d.className = "linkbox";
+        d.innerHTML = `<div class="who">${phaseKo[a.phase] || a.phase}</div>
+          <div class="lk"><b>${a.title}</b> · ${a.assigned}/${a.members}명 낙찰 · <span class="small">${a.id}</span></div>
+          <button class="btn small ghost">로그 보기</button>`;
+        d.querySelector("button").onclick = () => loadLog(a.id, a.title);
+        $("list").appendChild(d);
+      });
+    }
+
+    async function loadLog(rid, title) {
+      const r = await fetch(`/api/admin/auctions/${rid}/log`);
+      if (!r.ok) return alert("로그 조회 실패");
+      const data = await r.json();
+      $("logTitle").innerHTML = `<span class="num">📜</span> ${title} · 입찰 로그`;
+      const rows = data.events.map((e) => {
+        const t = new Date(e.time * 1000).toLocaleTimeString("ko-KR");
+        if (e.type === "start") return `<li><span class="tm">${t}</span> 🚩 경매 시작</li>`;
+        if (e.type === "bid") return `<li><span class="tm">${t}</span> 💰 <b>${e.captain}</b> → ${e.member} : <b style="color:var(--gold2)">${fmt(e.amount)}P</b></li>`;
+        if (e.type === "sold") return `<li><span class="tm">${t}</span> 🔨 ${e.member} 낙찰 → <b>${e.captain}</b> (${fmt(e.amount)}P)</li>`;
+        if (e.type === "unsold") return `<li><span class="tm">${t}</span> 🚫 ${e.member} 유찰</li>`;
+        return "";
+      }).join("");
+      $("log").innerHTML = `<ul class="logl">${rows || "<li class='small'>기록 없음</li>"}</ul>`;
+      $("logCard").style.display = "";
+      $("logCard").scrollIntoView({ behavior: "smooth" });
+    }
+
+    $("closeLog").onclick = () => ($("logCard").style.display = "none");
+    loadList();
+    setInterval(loadList, 5000);
+  </script>
+  <style>
+    .logl { list-style:none; margin:0; padding:0; }
+    .logl li { padding:7px 4px; border-bottom:1px dashed rgba(150,110,220,.15); font-size:14px; }
+    .logl .tm { color:var(--muted); font-size:12px; margin-right:8px; }
+  </style>
+  {% endif %}
+</body>
+</html>

@@ -4,3 +4,5 @@ aiosqlite
 fastapi
 uvicorn[standard]
 jinja2
+httpx
+itsdangerous

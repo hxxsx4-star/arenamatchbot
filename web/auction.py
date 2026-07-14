@@ -109,6 +109,7 @@ class AuctionRoom:
         self.high_cid: Optional[str] = None
         self.timer_remaining: int = 0
         self.created_at: float = time.time()
+        self.events: list[dict] = []   # 경매 이벤트 로그(입찰/낙찰/유찰) - 관리자 열람용
 
         self._timer_task: Optional[asyncio.Task] = None
         self._broadcast: Optional[Callable[[], Awaitable[None]]] = None
@@ -163,6 +164,20 @@ class AuctionRoom:
         }
         return data
 
+    def _log(self, etype: str, **data):
+        self.events.append({"t": time.time(), "type": etype, **data})
+
+    def event_log(self) -> list[dict]:
+        """관리자 열람용 이벤트 로그(사람이 읽기 좋은 형태)."""
+        out = []
+        for e in self.events:
+            out.append({
+                "time": e["t"], "type": e["type"],
+                "member": e.get("member"), "captain": e.get("captain"),
+                "amount": e.get("amount"),
+            })
+        return out
+
     # ---------- 진행 제어 ----------
     def bind(self, broadcast, on_finish):
         self._broadcast = broadcast
@@ -179,6 +194,7 @@ class AuctionRoom:
             self.order = [m.mid for m in self.members]
             random.shuffle(self.order)
             self.current_pos = -1
+            self._log("start")
         await self._advance()
 
     async def reshuffle(self):
@@ -252,6 +268,9 @@ class AuctionRoom:
                 return False, "이미 최고 입찰자입니다."
             self.high_bid = amount
             self.high_cid = cid
+            cur_m = self.get_member(self.current_mid) if self.current_mid else None
+            self._log("bid", member=cur_m.name if cur_m else None,
+                      captain=cap.name, amount=amount)
             # 안티 스나이핑: 남은 시간이 연장 시간보다 적으면 연장
             if self.timer_remaining < self.extend_time:
                 self.timer_remaining = self.extend_time
@@ -269,6 +288,9 @@ class AuctionRoom:
                     cap.roster.append(m.mid)
                     m.won_by = cap.cid
                     m.won_price = self.high_bid
+                    self._log("sold", member=m.name, captain=cap.name, amount=self.high_bid)
+            elif m:
+                self._log("unsold", member=m.name)
             self.phase = Phase.SOLD
         await self._emit()
         await asyncio.sleep(3)  # 결과 잠깐 표시
@@ -278,6 +300,9 @@ class AuctionRoom:
         """현재 팀원 유찰 처리하고 넘어가기(주최자)."""
         self._cancel_timer()
         async with self._lock:
+            cur_m = self.get_member(self.current_mid) if self.current_mid else None
+            if cur_m:
+                self._log("unsold", member=cur_m.name)
             self.phase = Phase.SOLD
             self.high_bid = 0
             self.high_cid = None

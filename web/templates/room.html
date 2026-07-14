@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} · 아레나 경매</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="room-top">
+      <div>
+        <div class="page-title" style="text-align:left">
+          <h1 style="font-size:26px">{{ title }}</h1>
+        </div>
+        <div class="small" id="subinfo"></div>
+      </div>
+      <div class="role-badge" id="roleBadge"></div>
+    </div>
+
+    <!-- 진행 무대 -->
+    <div class="card stage">
+      <div class="phasebar">
+        <span class="badge" id="phaseBadge">대기 중</span>
+        <span class="small" id="progress"></span>
+      </div>
+
+      <div id="stageBody" class="stage-body">
+        <div class="lobby-msg" id="lobbyMsg">주최자가 경매를 시작하기를 기다리는 중…</div>
+      </div>
+
+      <!-- 주최자 컨트롤 -->
+      <div class="host-ctrl" id="hostCtrl" style="display:none">
+        <button class="btn primary" id="btnStart">▶ 경매 시작</button>
+        <button class="btn ghost small" id="btnReshuffle">🔀 순서 다시 섞기</button>
+        <button class="btn danger small" id="btnSkip" style="display:none">⏭ 유찰(건너뛰기)</button>
+      </div>
+
+      <!-- 팀장 입찰 컨트롤 -->
+      <div class="bid-ctrl" id="bidCtrl" style="display:none">
+        <div class="myinfo">
+          내 포인트 <b id="myPoints">-</b> · 남은 슬롯 <b id="mySlots">-</b>
+        </div>
+        <div class="bid-row">
+          <button class="btn ghost small" id="btnMinus">−</button>
+          <input type="number" id="bidAmount" min="0">
+          <button class="btn ghost small" id="btnPlus">＋</button>
+          <button class="btn primary" id="btnBid">입찰</button>
+        </div>
+        <div class="bid-quick" id="bidQuick"></div>
+        <div class="notice" id="notice"></div>
+      </div>
+    </div>
+
+    <!-- 팀 현황 -->
+    <div class="card">
+      <h2><span class="num">◆</span> 팀 현황</h2>
+      <div class="teams" id="teams"></div>
+    </div>
+
+    <!-- 다음 순서 -->
+    <div class="card" id="upcomingCard" style="display:none">
+      <h2><span class="num">▸</span> 다음 순서</h2>
+      <div class="upcoming" id="upcoming"></div>
+    </div>
+
+    <div class="center mt"><a href="/">← 홈으로</a></div>
+  </div>
+
+  <script>
+    window.ROOM = {
+      rid: "{{ rid }}",
+      role: "{{ role }}",
+      cid: "{{ cid }}",
+      cname: "{{ cname }}",
+      search: window.location.search
+    };
+  </script>
+  <script src="/static/room.js"></script>
+</body>
+</html>

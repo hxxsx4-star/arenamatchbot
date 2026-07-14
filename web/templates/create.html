@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>경매 생성 · 아레나 경매</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <div class="page-title">
+      <h1>경매 생성</h1>
+      <p>팀장과 팀원 정보를 등록하고 경매를 시작하세요</p>
+    </div>
+
+    <!-- 01 기본 정보 -->
+    <div class="card">
+      <h2><span class="num">01</span> 기본 정보</h2>
+      <div class="field">
+        <label>경매 타이틀 <span class="req">*</span></label>
+        <input type="text" id="title" placeholder="예: 팀 드래프트 경매">
+      </div>
+      <div class="grid cols-3 mt">
+        <div class="field">
+          <label>팀 수</label>
+          <input type="number" id="team_count" min="2" max="10" value="5">
+        </div>
+        <div class="field">
+          <label>팀당 인원 <span class="hint">(팀장 포함)</span></label>
+          <input type="number" id="team_size" min="2" max="10" value="4">
+        </div>
+        <div class="field">
+          <label>총 포인트</label>
+          <input type="number" id="total_points" min="0" step="10" value="1000">
+        </div>
+      </div>
+    </div>
+
+    <!-- 02 방 옵션 -->
+    <div class="card">
+      <h2><span class="num">02</span> 방 옵션</h2>
+
+      <div class="subcard row-between">
+        <div>
+          <div style="font-weight:700">경매 순서 공개</div>
+          <div class="small">모든 참가자가 경매 순서를 확인할 수 있습니다</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="show_order" checked>
+          <span class="track"></span>
+        </label>
+      </div>
+
+      <div class="subcard">
+        <label>입찰 단위 방식</label>
+        <div class="seg" id="bidmode">
+          <button type="button" data-mode="fixed" class="active">고정 입찰</button>
+          <button type="button" data-mode="ratio">비율 입찰</button>
+        </div>
+        <div class="field mt" id="fixed_wrap">
+          <label>고정 입찰 단위</label>
+          <input type="number" id="fixed_unit" min="1" value="5">
+          <div class="small">매 입찰마다 이 금액 이상 올려야 합니다</div>
+        </div>
+        <div class="field mt" id="ratio_wrap" style="display:none">
+          <label>비율 입찰 (%)</label>
+          <input type="number" id="ratio_percent" min="1" value="10">
+          <div class="small">매 입찰마다 현재가의 이 비율(%) 이상 올려야 합니다</div>
+        </div>
+      </div>
+
+      <div class="subcard">
+        <label>타이머 설정</label>
+        <div class="grid cols-2">
+          <div class="field">
+            <label class="small">입찰 시간 <span title="한 팀원 경매의 기본 제한시간">ⓘ</span></label>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="number" id="bid_time" min="3" value="15"><span class="small">초</span>
+            </div>
+          </div>
+          <div class="field">
+            <label class="small">연장 시간 <span title="막판 입찰 시 남는 시간(안티 스나이핑)">ⓘ</span></label>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="number" id="extend_time" min="1" value="5"><span class="small">초</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="center small">필요한 기능이 있으면 문의주세요! 추가해드리겠습니다</div>
+    </div>
+
+    <!-- 03 팀장 등록 -->
+    <div class="card">
+      <h2><span class="num">03</span> 팀장 등록 <span class="small" id="captainCount"></span></h2>
+      <p class="small">각 팀의 팀장 정보를 입력하세요. 팀장은 개별 링크로 입장합니다.</p>
+      <div class="rows-head rowline captain-cols">
+        <div></div><div>이름</div><div>포지션</div><div>한줄소개</div><div>팀장포인트</div>
+      </div>
+      <div id="captains"></div>
+    </div>
+
+    <!-- 04 팀원 등록 -->
+    <div class="card">
+      <h2><span class="num">04</span> 팀원 등록 <span class="small" id="memberCount"></span></h2>
+      <p class="small">경매 대상 팀원 정보를 입력하세요. 팀원은 옵저버 링크로 관전할 수 있습니다.</p>
+      <div class="rows-head rowline member-cols">
+        <div></div><div>이름</div><div>포지션</div><div>한줄소개</div>
+      </div>
+      <div class="scrollbox" id="members"></div>
+      <div class="mt"><button type="button" class="btn ghost small" id="addMember">＋ 팀원 추가</button></div>
+    </div>
+
+    <div class="card summary">
+      <div id="sumline1"><b>5개 팀</b> × <b>4명</b> = 총 <b>20명</b></div>
+      <div id="sumline2" class="mt">팀장 5명 + 경매 대상 팀원 15명</div>
+      <div class="small mt">생성 후 주최자 링크, 팀장별 링크, 옵저버 공용 링크가 생성됩니다.</div>
+    </div>
+
+    <div class="actions">
+      <a class="btn ghost" href="/" style="text-decoration:none;text-align:center">취소</a>
+      <button class="btn primary" id="createBtn">경매 생성하기</button>
+    </div>
+    <div class="center mt"><a href="/">← 홈으로 돌아가기</a></div>
+
+    <!-- 생성 결과(링크) -->
+    <div class="card" id="result" style="display:none">
+      <h2><span class="num">✓</span> 경매가 생성되었습니다!</h2>
+      <p class="small">아래 링크를 각자에게 공유하세요. (링크 클릭 시 복사)</p>
+      <div id="links"></div>
+      <div class="actions mt">
+        <a class="btn primary" id="hostGo" href="#" style="text-decoration:none;text-align:center">주최자로 입장 →</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/create.js"></script>
+</body>
+</html>

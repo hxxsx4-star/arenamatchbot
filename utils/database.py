@@ -1,8 +1,10 @@
+import os
 import aiosqlite
 import time
 import json
 
-DB_PATH = 'legends.db'
+# 기본은 작업 디렉터리의 legends.db. ARENA_DB_PATH 로 재정의 가능(도커 볼륨 등).
+DB_PATH = os.environ.get("ARENA_DB_PATH", 'legends.db')
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:

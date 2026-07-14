@@ -12,6 +12,10 @@ from utils.logs import init_log_queue
 config = configparser.ConfigParser()
 config.read("config.ini", encoding="utf-8")
 TOKEN = config.get("Settings", "token", fallback="").strip()
+# config.ini 가 없으면 환경변수(DISCORD_TOKEN)에서 토큰을 읽습니다. (도커/CI 배포용)
+if not TOKEN:
+    import os
+    TOKEN = os.environ.get("DISCORD_TOKEN", "").strip()
 
 
 class MatchBot(commands.Bot):

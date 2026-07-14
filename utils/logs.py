@@ -161,3 +161,25 @@ async def mark_failed(ids):
             "UPDATE log_queue SET attempts = attempts + 1 WHERE id = ?", [(i,) for i in ids]
         )
         await db.commit()
+
+
+async def purge_posted(older_than_sec: int = 259200, vacuum: bool = False) -> int:
+    """전송 완료(posted=1)됐고 오래된 로그를 큐에서 삭제합니다. (로그봇이 주기적으로 호출)
+
+    큐 DB가 무한정 커지지 않도록 하는 정리 작업입니다. 기본은 3일(259200초) 지난 것.
+    vacuum=True 면 삭제 후 DB 파일 크기까지 실제로 회수합니다(락 발생, 가끔만 권장).
+    삭제된 행 수를 반환합니다.
+    """
+    if aiosqlite is None:
+        return 0
+    cutoff = time.time() - older_than_sec
+    async with aiosqlite.connect(LOG_QUEUE_PATH, timeout=30) as db:
+        cur = await db.execute(
+            "DELETE FROM log_queue WHERE posted = 1 AND created_at < ?", (cutoff,)
+        )
+        deleted = cur.rowcount
+        await db.commit()
+        if vacuum and deleted:
+            await db.execute("VACUUM")
+            await db.commit()
+    return deleted

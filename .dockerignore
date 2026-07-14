@@ -1,0 +1,10 @@
+.git
+__pycache__/
+*.pyc
+venv/
+.venv/
+config.ini
+*.db
+stats.json
+log_queue.db
+.idea/

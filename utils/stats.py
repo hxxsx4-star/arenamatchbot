@@ -5,8 +5,10 @@ import asyncio
 from filelock import FileLock
 from datetime import datetime, timedelta, timezone
 
-SHARED_FILE_PATH = "/home/hxxsx4/shared_data/stats.json"
-LOCK_FILE_PATH = "/home/hxxsx4/shared_data/stats.json.lock"
+# 공유 데이터 디렉터리 (모든 봇이 동일하게 사용). ARENA_SHARED_DIR 환경변수로 재정의 가능.
+SHARED_DIR = os.environ.get("ARENA_SHARED_DIR", "/home/hxxsx4/shared_data")
+SHARED_FILE_PATH = os.path.join(SHARED_DIR, "stats.json")
+LOCK_FILE_PATH = SHARED_FILE_PATH + ".lock"
 
 os.makedirs(os.path.dirname(SHARED_FILE_PATH), exist_ok=True)
 lock = FileLock(LOCK_FILE_PATH, timeout=5)

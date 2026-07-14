@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- arena bot local files ---
+config.ini
+*.db
+stats.json
+log_queue.db

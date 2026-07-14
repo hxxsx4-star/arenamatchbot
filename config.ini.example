@@ -1,0 +1,7 @@
+[Settings]
+# 내전봇 디스코드 토큰을 여기에 입력하세요.
+token = YOUR_MATCH_BOT_TOKEN_HERE
+
+# match.py에서 사용하는 내전 관리자 역할 ID (선택)
+[Match]
+match_admin_role_id = 0

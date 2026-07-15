@@ -3,3 +3,5 @@ uvicorn[standard]
 jinja2
 httpx
 itsdangerous
+discord.py
+aiosqlite

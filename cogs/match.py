@@ -1,279 +1,502 @@
+"""내전 진행 엔진.
+
+- 포럼(FORUM_ID)에 "ㅅ/손/저요/나" 등 참여 표현을 쓰면 봇이 ✅ 반응
+- /내전 진행 [게임종류] [인원수] : ✅ 표시된(참여 표현) 사람들을 스캔해 리스트 임베드로 표시
+  · 명령 실행자 = 방장
+  · 롤/발로란트는 팀짜기(내전 시작) 기능 제공
+  · 매번 포럼을 새로 스캔하므로, 임베드를 지우고 다시 실행해도 인원이 그대로 나옴("오래됨" 없음)
+- 롤: 닉네임/롤티어/주라인,부라인 · 발로: 발로닉네임/발로티어 로 표기
+- 팀짜기: 팀장 선택(1팀→2팀) → 스네이크 드래프트(1·2·2·1·2·2·1) → 블루/레드 팀 이미지
+- MVP 투표 + 1팀/2팀 승리(내전매니저/관리자) → 승리 +140P, 패배 +60P
+- 여러 명이 동시에 눌러도 상호작용 실패가 안 나도록 락 + 항상 응답 처리
+"""
+import io
+import re
+import asyncio
+
 import discord
 from discord.ext import commands
 from discord import app_commands
-from typing import Dict, List, Tuple
-import configparser
-import traceback
-import re
-import urllib.parse
 
-from utils.stats import add_points, load_stats, save_stats, ensure_user
+from utils.stats import add_points, get_nickname, get_lanes, format_num
+from utils.tiers import get_tier
 from utils.logs import MATCH_LOG_CH, enqueue_embed
 
+FORUM_ID = 1527367803676655697
+MANAGER_ROLE = 1526678410124988526
+WIN_POINTS, LOSE_POINTS = 140, 60
 
-def _fow_search_url(nickname: str) -> str:
-    """롤 닉네임(롤닉#태그)으로 FOW 전적 검색 URL 생성. #은 -로 치환."""
-    term = nickname.replace("#", "-").strip()
-    return "https://ss.fow.kr/find/" + urllib.parse.quote(term, safe="")
+# 참여 표현 (정규화 후 정확히 일치)
+TRIGGERS = {"ㅅ", "ㅅㅅ", "손", "저요", "나", "저", "ㄱ", "ㄱㄱ", "참여", "콜", "고", "ㅇㅋ", "ㅇ"}
 
-FORUM_CHANNEL_ID = 1519676788543066293
-EXTRA_ADMIN_ROLE_ID = 1517543242466463775
-MATCH_CLOSE_ROLE_ID = 1522224219138691184
+GAME_CHOICES = [
+    app_commands.Choice(name="리그오브레전드", value="lol"),
+    app_commands.Choice(name="발로란트", value="val"),
+    app_commands.Choice(name="오버워치", value="ow"),
+    app_commands.Choice(name="배틀그라운드", value="pubg"),
+    app_commands.Choice(name="구스구스덕", value="goose"),
+    app_commands.Choice(name="기타게임", value="etc"),
+]
+GAME_LABELS = {"lol": "리그오브레전드", "val": "발로란트", "ow": "오버워치",
+               "pubg": "배틀그라운드", "goose": "구스구스덕", "etc": "기타게임"}
+TEAM_GAMES = {"lol", "val"}                 # 팀짜기 지원
+DRAFT_PICKS = [1, 2, 2, 1, 1, 2, 2, 1]      # 팀장 선택 후 픽 순서 (팀 번호) → 팀1:5, 팀2:5
 
-_cfg = configparser.ConfigParser()
-try: _cfg.read("config.ini", encoding="utf-8")
-except: pass
+_norm_re = re.compile(r"[^가-힣ㄱ-ㅎa-zA-Z]")
 
-def _get_id(section: str, key: str) -> int:
+
+def is_trigger(content: str) -> bool:
+    if not content:
+        return False
+    norm = _norm_re.sub("", content).strip().lower()
+    return norm in TRIGGERS
+
+
+def can_manage(member: discord.Member, host_id: int) -> bool:
+    """방장 / 내전매니저 / 서버 관리 권한이면 True."""
+    if member.id == host_id:
+        return True
+    if member.guild_permissions.administrator or member.guild_permissions.manage_guild:
+        return True
+    return any(r.id == MANAGER_ROLE for r in member.roles)
+
+
+async def player_line(member: discord.Member, game: str, idx: int) -> str:
+    """리스트 임베드 한 줄 (게임별 표기)."""
+    if game == "lol":
+        nick = await get_nickname(member.id, "lol") or member.display_name
+        tier = get_tier(member, "lol") or "?"
+        main, sub = await get_lanes(member.id)
+        return f"`{idx}.` {nick} / {tier} / {main or '-'},{sub or '-'}"
+    if game == "val":
+        nick = await get_nickname(member.id, "val") or member.display_name
+        tier = get_tier(member, "val") or "?"
+        return f"`{idx}.` {nick} / {tier}"
+    return f"`{idx}.` {member.display_name}"
+
+
+async def short_name(member: discord.Member, game: str) -> str:
+    if game == "lol":
+        nick = await get_nickname(member.id, "lol") or member.display_name
+        tier = get_tier(member, "lol") or "?"
+        return f"{nick} ({tier})"
+    if game == "val":
+        nick = await get_nickname(member.id, "val") or member.display_name
+        tier = get_tier(member, "val") or "?"
+        return f"{nick} ({tier})"
+    return member.display_name
+
+
+# ============ 팀 결과 이미지 ============
+def _font(size, bold=True):
+    from PIL import ImageFont
     try:
-        val = _cfg.get(section, key, fallback="0")
-        return int(val) if val.isdigit() else 0
-    except: return 0
+        return ImageFont.truetype("font.ttf" if bold else "font_ui.ttf", size)
+    except OSError:
+        return ImageFont.load_default()
 
-MATCH_ADMIN_ROLE_ID: int = _get_id("Match", "match_admin_role_id")
-JOIN_KEYWORDS = {"ㅅ", "손", "son", "저요", "나", "참여"}
 
-TIERS = {
-    1508940023582691328: (1, "C"), 1508939965520674926: (2, "GM"), 1508939943861293167: (3, "M"),
-    1508939927008841938: (4, "D"), 1508939899116716042: (5, "E"), 1508939841604423882: (6, "P"),
-    1508939788210802699: (7, "G"), 1508939767084093500: (8, "S"), 1508939527954239578: (9, "B"),
-    1508941153259749466: (10, "I"), 1508939280129724546: (11, "U")
-}
+def render_team_image(title, blue, red, mvp_name=None, winner=None):
+    """blue/red = [(name, sub)] 리스트. winner: 1|2|None."""
+    from PIL import Image, ImageDraw
+    W, H = 1000, 620
+    img = Image.new("RGB", (W, H), (18, 14, 32))
+    d = ImageDraw.Draw(img)
+    f_title, f_team, f_row, f_small = _font(46), _font(34), _font(28, False), _font(22, False)
 
-LINES = {
-    1508947587292729507: (1, "탑"), 1508947614597513327: (2, "정글"),
-    1508947632138096680: (3, "미드"), 1508947648328110211: (4, "원딜"),
-    1508947663129673728: (5, "서폿")
-}
+    d.text((W // 2, 46), title, font=f_title, fill=(255, 255, 255), anchor="mm")
 
-class MVPSelectView(discord.ui.View):
-    def __init__(self, main_view: "MatchResultView", participants: List[discord.Member], voter: discord.Member | discord.User):
-        super().__init__(timeout=120)
-        self.main_view = main_view
-        options = [
-            discord.SelectOption(label=member.display_name[:100], value=str(member.id))
-            for member in participants if member.id != voter.id
-        ]
-        if not options:
-            options = [discord.SelectOption(label="투표할 대상이 없습니다.", value="0")]
-        self.sel = discord.ui.Select(placeholder="가장 활약한 선수를 선택하세요!", options=options[:25])
-        self.sel.callback = self.vote_callback
-        self.add_item(self.sel)
+    cols = [(40, (90, 140, 255), "1팀 (블루)", blue, 1),
+            (520, (245, 90, 110), "2팀 (레드)", red, 2)]
+    for x, color, label, members, tno in cols:
+        win = winner == tno
+        d.rounded_rectangle((x, 100, x + 440, H - 40), radius=22,
+                            fill=(30, 40, 70) if tno == 1 else (60, 28, 38),
+                            outline=(255, 205, 90) if win else color, width=6 if win else 3)
+        head = label + ("   WIN" if win else "")
+        d.text((x + 24, 122), head, font=f_team, fill=color if not win else (255, 205, 90))
+        y = 190
+        for i, (name, sub) in enumerate(members, 1):
+            d.text((x + 28, y), f"{i}. {name}", font=f_row, fill=(240, 240, 250))
+            if sub:
+                d.text((x + 28, y + 32), sub, font=f_small, fill=(170, 170, 200))
+            y += 66
+    if mvp_name:
+        d.text((W // 2, H - 22), f"MVP: {mvp_name}", font=_font(26), fill=(255, 205, 90), anchor="mm")
 
-    async def vote_callback(self, interaction: discord.Interaction):
-        cand_id = int(self.sel.values[0])
-        if cand_id == 0:
-            await interaction.response.edit_message(content="❌ 투표할 수 있는 다른 참가자가 없습니다.", view=None)
-            return
-        self.main_view.votes[interaction.user.id] = cand_id
-        cand_member = interaction.guild.get_member(cand_id)
-        name = cand_member.display_name if cand_member else f"유저({cand_id})"
-        await interaction.response.edit_message(content=f"✅ {name} 님에게 MVP 투표를 완료했습니다!", view=None)
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    buf.seek(0)
+    return buf.getvalue()
 
-class MatchResultView(discord.ui.View):
-    def __init__(self, cog: "MatchCog", participants: List[discord.Member]):
+
+# ============ 세션 ============
+class MatchSession:
+    def __init__(self, host: discord.Member, game: str, capacity: int, participants: list[discord.Member]):
+        self.host_id = host.id
+        self.guild = host.guild
+        self.game = game
+        self.capacity = capacity
+        self.participants = participants          # discord.Member 리스트
+        self.lock = asyncio.Lock()
+        # 팀짜기 상태
+        self.phase = "list"                       # list/captain1/captain2/draft/teams/done
+        self.captains: list[int] = [0, 0]
+        self.team1: list[int] = []
+        self.team2: list[int] = []
+        self.pool: list[int] = []
+        self.draft_idx = 0
+        self.mvp_votes: dict[int, int] = {}
+        self.winner = None
+
+    def member(self, uid: int):
+        return self.guild.get_member(uid) or next((m for m in self.participants if m.id == uid), None)
+
+    def in_match(self, uid: int) -> bool:
+        return any(m.id == uid for m in self.participants)
+
+    # ----- 팀짜기 로직 (순수) -----
+    def start_draft(self):
+        self.pool = [m.id for m in self.participants]
+        self.team1, self.team2, self.captains = [], [], [0, 0]
+        self.draft_idx = 0
+        self.phase = "captain1"
+
+    def set_captain(self, team: int, uid: int):
+        self.captains[team - 1] = uid
+        self.pool.remove(uid)
+        (self.team1 if team == 1 else self.team2).append(uid)
+        self.phase = "captain2" if team == 1 else "draft"
+
+    def current_team(self) -> int:
+        return DRAFT_PICKS[self.draft_idx]
+
+    def current_captain(self) -> int:
+        return self.captains[self.current_team() - 1]
+
+    def pick(self, uid: int):
+        team = self.current_team()
+        self.pool.remove(uid)
+        (self.team1 if team == 1 else self.team2).append(uid)
+        self.draft_idx += 1
+        self._auto_finish()
+
+    def _auto_finish(self):
+        # 마지막 1명은 선택지가 없으므로 자동 배정 (남은 인원이 1명일 때)
+        if self.draft_idx < len(DRAFT_PICKS) and len(self.pool) == 1:
+            team = DRAFT_PICKS[self.draft_idx]
+            uid = self.pool.pop(0)
+            (self.team1 if team == 1 else self.team2).append(uid)
+            self.draft_idx += 1
+        if self.draft_idx >= len(DRAFT_PICKS):
+            self.phase = "teams"
+
+    def finalize(self, winner: int):
+        self.winner = winner
+        self.phase = "done"
+        win_ids = self.team1 if winner == 1 else self.team2
+        lose_ids = self.team2 if winner == 1 else self.team1
+        return win_ids, lose_ids
+
+    def mvp(self):
+        if not self.mvp_votes:
+            return None
+        tally: dict[int, int] = {}
+        for t in self.mvp_votes.values():
+            tally[t] = tally.get(t, 0) + 1
+        return max(tally, key=tally.get)
+
+
+# ============ Views ============
+class ListView(discord.ui.View):
+    """리스트 화면. 롤/발로면 '내전 시작' 버튼."""
+    def __init__(self, cog: "MatchCog", session: MatchSession):
         super().__init__(timeout=None)
         self.cog = cog
-        self.participants = participants
-        self.votes: Dict[int, int] = {}
+        self.session = session
+        if session.game not in TEAM_GAMES:
+            self.remove_item(self.start_button)
 
-    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
-        traceback.print_exc()
-        if not interaction.response.is_done():
-            await interaction.response.send_message("오류가 발생했습니다.", ephemeral=True)
+    @discord.ui.button(label="내전 시작 (팀짜기)", style=discord.ButtonStyle.success, emoji="⚔️")
+    async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        s = self.session
+        if not can_manage(interaction.user, s.host_id):
+            return await interaction.response.send_message("❌ 방장/내전매니저/관리자만 시작할 수 있습니다.", ephemeral=True)
+        async with s.lock:
+            if s.phase != "list":
+                return await interaction.response.send_message("이미 진행 중입니다.", ephemeral=True)
+            if len(s.participants) != 10:
+                return await interaction.response.send_message(
+                    f"❌ 팀짜기는 정확히 10명이 필요합니다. (현재 {len(s.participants)}명)", ephemeral=True)
+            s.start_draft()
+        await interaction.response.edit_message(
+            embed=self.cog.captain_embed(s, 1), view=CaptainView(self.cog, s, 1))
 
-    @discord.ui.button(label="MVP 투표", style=discord.ButtonStyle.primary, emoji="👑")
-    async def vote_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        participant_ids = [m.id for m in self.participants]
-        if interaction.user.id not in participant_ids and not self.cog._is_admin(interaction.user):
-             await interaction.response.send_message("이번 내전 참여자만 투표할 수 있습니다.", ephemeral=True)
-             return
-        view = MVPSelectView(self, self.participants, interaction.user)
-        await interaction.response.send_message("오늘의 MVP를 선택해주세요!", view=view, ephemeral=True)
 
-    @discord.ui.button(label="투표 종료 및 지급 (관리자)", style=discord.ButtonStyle.success)
-    async def close_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        is_admin = self.cog._is_admin(interaction.user)
-        has_special_role = isinstance(interaction.user, discord.Member) and any(r.id == MATCH_CLOSE_ROLE_ID for r in interaction.user.roles)
+class CaptainView(discord.ui.View):
+    def __init__(self, cog: "MatchCog", session: MatchSession, team: int):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.session = session
+        self.team = team
+        options = [discord.SelectOption(label=(session.member(uid).display_name if session.member(uid) else str(uid)),
+                                        value=str(uid)) for uid in session.pool]
+        self.select = discord.ui.Select(placeholder=f"{team}팀 팀장을 선택하세요", options=options[:25])
+        self.select.callback = self.on_select
+        self.add_item(self.select)
 
-        if not (is_admin or has_special_role):
-            await interaction.response.send_message("관리자 또는 지정된 역할만 투표를 종료할 수 있습니다.", ephemeral=True)
-            return
-        if not self.votes:
-            await interaction.response.send_message("아직 아무도 투표하지 않았습니다.", ephemeral=True)
-            return
+    async def on_select(self, interaction: discord.Interaction):
+        s = self.session
+        if not can_manage(interaction.user, s.host_id):
+            return await interaction.response.send_message("❌ 방장/내전매니저/관리자만 선택할 수 있습니다.", ephemeral=True)
+        async with s.lock:
+            expected = "captain1" if self.team == 1 else "captain2"
+            if s.phase != expected:
+                return await interaction.response.send_message("이미 처리되었습니다.", ephemeral=True)
+            uid = int(self.select.values[0])
+            if uid not in s.pool:
+                return await interaction.response.send_message("이미 선택된 인원입니다.", ephemeral=True)
+            s.set_captain(self.team, uid)
+        if s.phase == "captain2":
+            await interaction.response.edit_message(embed=self.cog.captain_embed(s, 2), view=CaptainView(self.cog, s, 2))
+        else:
+            await self.cog.show_draft(interaction, s)
 
-        await interaction.response.defer()
-        tally = {}
-        for cand_id in self.votes.values():
-            tally[cand_id] = tally.get(cand_id, 0) + 1
 
-        max_votes = max(tally.values())
-        mvp_ids = [uid for uid, v in tally.items() if v == max_votes]
-        mentions = []
+class DraftView(discord.ui.View):
+    def __init__(self, cog: "MatchCog", session: MatchSession):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.session = session
+        options = [discord.SelectOption(label=(session.member(uid).display_name if session.member(uid) else str(uid)),
+                                        value=str(uid)) for uid in session.pool]
+        team = session.current_team()
+        self.select = discord.ui.Select(placeholder=f"{team}팀 팀장이 픽하세요", options=options[:25])
+        self.select.callback = self.on_select
+        self.add_item(self.select)
 
-        participant_count = len(self.participants)
-        reward_points = 200 if participant_count >= 20 else 50
-        stats = await load_stats()
+    async def on_select(self, interaction: discord.Interaction):
+        s = self.session
+        allowed = interaction.user.id == s.current_captain() or can_manage(interaction.user, s.host_id)
+        if not allowed:
+            return await interaction.response.send_message("❌ 지금 픽할 차례의 팀장만 선택할 수 있습니다.", ephemeral=True)
+        async with s.lock:
+            if s.phase != "draft":
+                return await interaction.response.send_message("드래프트가 이미 끝났습니다.", ephemeral=True)
+            uid = int(self.select.values[0])
+            if uid not in s.pool:
+                return await interaction.response.send_message("이미 선택된 인원입니다.", ephemeral=True)
+            s.pick(uid)
+        if s.phase == "teams":
+            await self.cog.show_teams(interaction, s)
+        else:
+            await self.cog.show_draft(interaction, s)
 
-        for mvp_id in mvp_ids:
-            await add_points(mvp_id, reward_points)
-            rec = ensure_user(stats, str(mvp_id))
-            rec["mvp_count"] = rec.get("mvp_count", 0) + 1
-            mem = interaction.guild.get_member(mvp_id)
-            mentions.append(mem.mention if mem else f"<@{mvp_id}>")
 
-        await save_stats(stats)
+class ResultView(discord.ui.View):
+    def __init__(self, cog: "MatchCog", session: MatchSession):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.session = session
 
-        for child in self.children:
-            child.disabled = True
+    @discord.ui.button(label="MVP 투표", style=discord.ButtonStyle.primary, emoji="🏅")
+    async def mvp_vote(self, interaction: discord.Interaction, button: discord.ui.Button):
+        s = self.session
+        if not s.in_match(interaction.user.id):
+            return await interaction.response.send_message("❌ 참가자만 투표할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message("MVP를 선택하세요.", view=MVPVoteView(self.cog, s, interaction.user.id), ephemeral=True)
 
-        await interaction.edit_original_response(view=self)
-        result_text = f"🎉 내전 MVP 투표 종료! 🎉\n최다 득표자: {', '.join(mentions)} ({max_votes}표)\n선정되신 분들께 `{reward_points} Point`가 성공적으로 지급되었습니다!"
-        await interaction.channel.send(result_text)
+    @discord.ui.button(label="1팀 승리", style=discord.ButtonStyle.secondary, emoji="🔵")
+    async def win1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.declare_winner(interaction, self.session, 1)
+
+    @discord.ui.button(label="2팀 승리", style=discord.ButtonStyle.secondary, emoji="🔴")
+    async def win2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.cog.declare_winner(interaction, self.session, 2)
+
+
+class MVPVoteView(discord.ui.View):
+    def __init__(self, cog: "MatchCog", session: MatchSession, voter_id: int):
+        super().__init__(timeout=60)
+        self.session = session
+        self.voter_id = voter_id
+        opts = [discord.SelectOption(label=(session.member(uid).display_name if session.member(uid) else str(uid)),
+                                     value=str(uid)) for uid in (session.team1 + session.team2)]
+        self.select = discord.ui.Select(placeholder="MVP 선택", options=opts[:25])
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        async with self.session.lock:
+            self.session.mvp_votes[self.voter_id] = int(self.select.values[0])
+        await interaction.response.edit_message(content="✅ MVP 투표가 반영되었습니다!", view=None)
+
 
 class MatchCog(commands.Cog):
-    match_group = app_commands.Group(name="내전", description="포럼 기반 내전 진행 명령어")
-
+    """내전 진행 엔진."""
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    def _is_admin(self, user: discord.Member | discord.User) -> bool:
-        if isinstance(user, discord.Member):
-            if user.guild_permissions.manage_guild: return True
-            if MATCH_ADMIN_ROLE_ID and any(role.id == MATCH_ADMIN_ROLE_ID for role in user.roles): return True
-            if EXTRA_ADMIN_ROLE_ID and any(role.id == EXTRA_ADMIN_ROLE_ID for role in user.roles): return True
-        return False
+    match_group = app_commands.Group(name="내전", description="내전 관련 명령어")
 
-    def _get_user_tier(self, member: discord.Member) -> Tuple[int, str]:
-        highest_order = 99
-        tier_name = "U"
-        for role in member.roles:
-            if role.id in TIERS:
-                order, name = TIERS[role.id]
-                if order < highest_order:
-                    highest_order, tier_name = order, name
-        return highest_order, tier_name
-
-    def _get_user_lines(self, member: discord.Member) -> str:
-        user_lines = []
-        for role in member.roles:
-            if role.id in LINES:
-                user_lines.append(LINES[role.id])
-        user_lines.sort(key=lambda x: x[0])
-        if user_lines:
-            line_names = ", ".join([name for _, name in user_lines])
-            return line_names
-        return "라인 없음"
-
+    # ----- 포럼 반응 -----
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot: return
-        if not isinstance(message.channel, discord.Thread) or message.channel.parent_id != FORUM_CHANNEL_ID: return
-
-        if message.content.strip().lower() in JOIN_KEYWORDS:
-            try: await message.add_reaction("✅")
-            except: pass
-
-    @match_group.command(name="진행", description="스레드 맨 위에서부터 참여한 선착순 n명을 티어순으로 보여주고 투표를 시작합니다.")
-    @app_commands.describe(member_count="명단에 띄울 선착순 인원수를 입력하세요.")
-    @app_commands.rename(member_count="인원수")
-    async def start_match(self, interaction: discord.Interaction, member_count: int):
-        if member_count <= 0:
-            await interaction.response.send_message("인원수는 1명 이상이어야 합니다.", ephemeral=True)
+        if message.author.bot:
             return
-
-        await interaction.response.defer()
-
-        if not isinstance(interaction.channel, discord.Thread) or interaction.channel.parent_id != FORUM_CHANNEL_ID:
-            await interaction.followup.send("이 명령어는 지정된 내전 모집 게시글(스레드) 안에서만 사용할 수 있습니다.", ephemeral=True)
+        ch = message.channel
+        parent_id = getattr(ch, "parent_id", None)
+        if parent_id != FORUM_ID and ch.id != FORUM_ID:
             return
+        if is_trigger(message.content):
+            try:
+                await message.add_reaction("✅")
+            except discord.HTTPException:
+                pass
 
-        participants = []
-        async for msg in interaction.channel.history(limit=1000, oldest_first=True):
-            if msg.content.strip().lower() in JOIN_KEYWORDS:
-                if msg.author.id not in participants:
-                    participants.append(msg.author.id)
-                    if len(participants) >= member_count:
-                        break
+    async def scan_participants(self, guild: discord.Guild) -> list[discord.Member]:
+        """포럼의 활성 스레드에서 참여 표현을 남긴 사람들을 스캔(최신 실시간)."""
+        forum = guild.get_channel(FORUM_ID)
+        found: dict[int, discord.Member] = {}
+        threads = []
+        if forum is not None:
+            threads = list(getattr(forum, "threads", []))
+            try:
+                async for th in forum.archived_threads(limit=10):
+                    threads.append(th)
+            except Exception:
+                pass
+        for th in threads:
+            try:
+                async for msg in th.history(limit=300):
+                    if msg.author.bot or msg.author.id in found:
+                        continue
+                    if is_trigger(msg.content):
+                        m = guild.get_member(msg.author.id)
+                        if m:
+                            found[m.id] = m
+            except Exception:
+                continue
+        return list(found.values())
 
-        if not participants:
-            await interaction.followup.send("현재 등록된 내전 참여자가 없습니다.", ephemeral=True)
-            return
-
-        member_list = []
-        for uid in participants:
-            member = interaction.guild.get_member(uid)
-            if member:
-                tier_order, tier_name = self._get_user_tier(member)
-                member_list.append({"member": member, "order": tier_order, "tier_name": tier_name})
-
-        member_list.sort(key=lambda x: x["order"])
-
-        stats = await load_stats()
-        for data in member_list:
-            uid_str = str(data["member"].id)
-            rec = ensure_user(stats, uid_str)
-            rec["match_count"] = rec.get("match_count", 0) + 1
-        await save_stats(stats)
-
-        output_lines = []
-        participant_members = []
-
-        for data in member_list:
-            member = data["member"]
-            participant_members.append(member)
-
-            raw_name = member.display_name
-            match = re.match(r'^(\d{2})\s+(.+)\s+(남|여)\s*(.*)$', raw_name.strip())
-
-            if match:
-                nickname = match.group(2).strip()
-            else:
-                temp = raw_name[2:].lstrip() if len(raw_name) >= 2 and raw_name[:2].isdigit() else raw_name
-                nickname = re.sub(r'\s+(남|여)[^#]*$', '', temp).strip()
-                if not nickname:
-                    nickname = raw_name
-
-            tier_name = data['tier_name']
-            uid_str = str(member.id)
-            rec = ensure_user(stats, uid_str)
-
-            if "registered_lines" in rec and rec["registered_lines"]:
-                line_text = ", ".join(rec["registered_lines"])
-            else:
-                line_text = self._get_user_lines(member)
-
-            fow_url = _fow_search_url(nickname)
-            output_lines.append(f"[{tier_name}] {nickname} / {line_text} ([전적]({fow_url}))")
-
-        description_text = "\n".join(output_lines)
-        if len(description_text) > 4000:
-            description_text = description_text[:4000] + "\n\n... (텍스트 길이 제한으로 생략됨)"
-
-        embed = discord.Embed(title=f"🎮 내전 참가자 명단 (선착순 {len(member_list)}명 / 티어순)", description=description_text, color=discord.Color.blue())
-        embed.set_footer(text=f"요청 인원: {member_count}명 | 실제 확인된 인원: {len(member_list)}명")
-
-        if len(participants) >= 20:
-            auction_msg = (
-                "🚨 내전 참가자가 20인 이상입니다!\n"
-                "인원이 많아 경매 내전 모드로 진행하는 것을 권장합니다.\n"
-                "👉 관리자님은 `/경매 팀장` 명령어로 팀장을 뽑은 뒤 `/경매 시작`을 진행해주세요!"
-            )
-            embed.add_field(name="💡 다인원 경매 진행 안내", value=auction_msg, inline=False)
-
-        view = MatchResultView(self, participant_members)
-        await interaction.followup.send(embed=embed, view=view)
-
-        log_embed = discord.Embed(
-            title="📝 내전 시작 로그",
-            description=f"진행 스레드: {interaction.channel.mention}\n\n[참가자 명단]\n" + description_text,
-            color=discord.Color.green()
+    # ----- 임베드 빌더 -----
+    async def list_embed(self, s: MatchSession) -> discord.Embed:
+        host = s.member(s.host_id)
+        embed = discord.Embed(
+            title=f"⚔️ 내전 모집 · {GAME_LABELS.get(s.game, s.game)}",
+            description=f"방장: {host.mention if host else '?'} · 모집 인원: {s.capacity}명\n현재 참여: **{len(s.participants)}명**",
+            color=discord.Color.blue() if s.game == "lol" else discord.Color.red() if s.game == "val" else discord.Color.blurple(),
         )
-        log_embed.set_footer(text=f"선착순 {len(member_list)}명 참여")
+        lines = [await player_line(m, s.game, i) for i, m in enumerate(s.participants, 1)]
+        embed.add_field(name="참여자", value="\n".join(lines) if lines else "아직 참여자가 없습니다.", inline=False)
+        if s.game in TEAM_GAMES:
+            embed.set_footer(text="정확히 10명이 되면 '내전 시작'으로 팀짜기를 진행하세요.")
+        return embed
 
-        # 로그는 직접 올리지 않고 공유 큐에 적재 → 로그봇이 내전 로그 채널에 기록 (대상 서버만)
-        enqueue_embed(MATCH_LOG_CH, log_embed.to_dict(), guild=interaction.guild)
+    def captain_embed(self, s: MatchSession, team: int) -> discord.Embed:
+        return discord.Embed(
+            title=f"👑 {team}팀 팀장 선택",
+            description=f"{team}팀 팀장을 선택하세요. (방장/내전매니저/관리자)",
+            color=discord.Color.gold())
+
+    async def draft_embed(self, s: MatchSession) -> discord.Embed:
+        team = s.current_team()
+        cap = s.member(s.current_captain())
+        e = discord.Embed(title="🧩 팀 드래프트",
+                          description=f"이번 차례: **{team}팀** — 팀장 {cap.mention if cap else '?'}",
+                          color=discord.Color.blue() if team == 1 else discord.Color.red())
+        e.add_field(name="🔵 1팀", value="\n".join(f"- {(await short_name(s.member(u), s.game))}" for u in s.team1) or "-", inline=True)
+        e.add_field(name="🔴 2팀", value="\n".join(f"- {(await short_name(s.member(u), s.game))}" for u in s.team2) or "-", inline=True)
+        pool_names = ", ".join((s.member(u).display_name if s.member(u) else str(u)) for u in s.pool)
+        e.add_field(name="남은 인원", value=pool_names or "-", inline=False)
+        return e
+
+    async def show_draft(self, interaction: discord.Interaction, s: MatchSession):
+        await interaction.response.edit_message(embed=await self.draft_embed(s), view=DraftView(self, s))
+
+    async def _team_rows(self, s: MatchSession, ids):
+        rows = []
+        for u in ids:
+            m = s.member(u)
+            if s.game == "lol":
+                nick = await get_nickname(u, "lol") or (m.display_name if m else str(u))
+                tier = get_tier(m, "lol") or "?"
+                main, sub = await get_lanes(u)
+                rows.append((f"{nick}", f"{tier} · {main or '-'},{sub or '-'}"))
+            elif s.game == "val":
+                nick = await get_nickname(u, "val") or (m.display_name if m else str(u))
+                rows.append((f"{nick}", get_tier(m, "val") or "?"))
+            else:
+                rows.append(((m.display_name if m else str(u)), ""))
+        return rows
+
+    async def show_teams(self, interaction: discord.Interaction, s: MatchSession, winner=None, mvp_name=None):
+        blue = await self._team_rows(s, s.team1)
+        red = await self._team_rows(s, s.team2)
+        title = f"내전 결과 · {GAME_LABELS.get(s.game, s.game)}" if winner else f"팀 편성 완료 · {GAME_LABELS.get(s.game, s.game)}"
+        img = await asyncio.to_thread(render_team_image, title, blue, red, mvp_name, winner)
+        file = discord.File(io.BytesIO(img), filename="teams.png")
+        content = None
+        if winner:
+            content = f"🏆 **{winner}팀 승리!** 승리팀 +{WIN_POINTS}P / 패배팀 +{LOSE_POINTS}P"
+        view = None if winner else ResultView(self, s)
+        if interaction.response.is_done():
+            await interaction.followup.send(content=content, file=file, view=view)
+        else:
+            await interaction.response.edit_message(content=content, embed=None, attachments=[file], view=view)
+
+    async def declare_winner(self, interaction: discord.Interaction, s: MatchSession, winner: int):
+        if not can_manage(interaction.user, s.host_id):
+            return await interaction.response.send_message("❌ 내전매니저/관리자만 결과를 확정할 수 있습니다.", ephemeral=True)
+        async with s.lock:
+            if s.phase == "done":
+                return await interaction.response.send_message("이미 결과가 확정되었습니다.", ephemeral=True)
+            if s.phase != "teams":
+                return await interaction.response.send_message("아직 팀 편성이 끝나지 않았습니다.", ephemeral=True)
+            win_ids, lose_ids = s.finalize(winner)
+        for uid in win_ids:
+            await add_points(uid, WIN_POINTS)
+        for uid in lose_ids:
+            await add_points(uid, LOSE_POINTS)
+        mvp_id = s.mvp()
+        mvp_member = s.member(mvp_id) if mvp_id else None
+        mvp_name = (await short_name(mvp_member, s.game)) if mvp_member else None
+        await interaction.response.defer()
+        await self.show_teams(interaction, s, winner=winner, mvp_name=mvp_name)
+        # 내전 종료 로그 (내전로그 채널) — 게임/승패/팀 편성/MVP
+        try:
+            host = s.member(s.host_id)
+            blue_names = [await short_name(s.member(u), s.game) for u in s.team1]
+            red_names = [await short_name(s.member(u), s.game) for u in s.team2]
+            e = discord.Embed(
+                title="🏆 내전 종료",
+                description=f"게임: **{GAME_LABELS.get(s.game, s.game)}** · 방장: {host.mention if host else '?'}",
+                color=discord.Color.gold())
+            e.add_field(name=f"🔵 1팀{' 👑 WIN' if winner == 1 else ''}",
+                        value="\n".join(f"- {n}" for n in blue_names) or "-", inline=True)
+            e.add_field(name=f"🔴 2팀{' 👑 WIN' if winner == 2 else ''}",
+                        value="\n".join(f"- {n}" for n in red_names) or "-", inline=True)
+            e.add_field(name="보상", value=f"승리팀 +{WIN_POINTS}P / 패배팀 +{LOSE_POINTS}P", inline=False)
+            if mvp_name:
+                e.add_field(name="🏅 MVP", value=mvp_name, inline=False)
+            enqueue_embed(MATCH_LOG_CH, e.to_dict(), guild=s.guild)
+        except Exception:
+            pass
+
+    # ----- 명령어 -----
+    @match_group.command(name="진행", description="포럼 참여자들로 내전을 진행합니다.")
+    @app_commands.describe(게임종류="내전 게임", 인원수="모집 인원 (미입력 시 롤/발로 10명, 그 외 20명)")
+    @app_commands.choices(게임종류=GAME_CHOICES)
+    async def progress(self, interaction: discord.Interaction,
+                       게임종류: app_commands.Choice[str], 인원수: int = None):
+        await interaction.response.defer()
+        game = 게임종류.value
+        capacity = 인원수 or (10 if game in TEAM_GAMES else 20)
+        found = await self.scan_participants(interaction.guild)
+        participants = found[:capacity]
+        session = MatchSession(interaction.user, game, capacity, participants)
+        await interaction.followup.send(embed=await self.list_embed(session), view=ListView(self, session))
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(MatchCog(bot))

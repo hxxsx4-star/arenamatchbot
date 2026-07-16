@@ -58,8 +58,8 @@ def is_target_guild(guild) -> bool:
         return False
     return gid == GUILD_ID
 
+WALK_LOG_CH = 1527252000427737139        # 산책 로그
 # 채널 미지정(비활성). 나중에 채널 ID를 넣으면 자동으로 활성화됩니다.
-WALK_LOG_CH = 0        # 산책 로그
 ITEM_USE_LOG_CH = 0    # 아이템 사용 로그
 
 # 하위호환 별칭 (기존 펫 코드가 쓰던 통합 상수)

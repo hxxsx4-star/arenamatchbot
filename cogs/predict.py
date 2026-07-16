@@ -12,7 +12,7 @@ from .ui_predict import (
     local_get_user_all_bets, local_set_bet_close_time, local_get_expired_bets,
     generate_bet_embed, BettingView
 )
-from utils.database import add_item
+from utils.stats import add_points, format_num
 
 class PredictCog(commands.Cog):
     def __init__(self, bot):
@@ -145,10 +145,10 @@ class PredictCog(commands.Cog):
             reward = int(math.floor(share_ratio * distributable_pool))
 
             if reward > 0:
-                await add_item(user_id, "서사급 알", reward)
-                payout_logs.append(f"<@{user_id}>: {reward}개 (원금 {amount}개)")
+                await add_points(user_id, reward)
+                payout_logs.append(f"<@{user_id}>: {format_num(reward)}P (원금 {format_num(amount)}P)")
 
-        result_desc = f"총 베팅 풀 `{total_pool}개` 중 5%(`{system_fee}개`) 수수료를 제외한 `{distributable_pool}개`가 분배되었습니다.\n\n🎉 당첨자 목록\n"
+        result_desc = f"총 베팅 풀 `{format_num(total_pool)}P` 중 5%(`{format_num(system_fee)}P`) 수수료를 제외한 `{format_num(distributable_pool)}P`가 분배되었습니다.\n\n🎉 당첨자 목록\n"
         result_desc += "\n".join(payout_logs) if payout_logs else "상금을 받은 유저가 없습니다."
 
         embed = discord.Embed(title=f"🎊 예측 결과 발표: {주제}", description=result_desc, color=discord.Color.gold())
@@ -180,7 +180,7 @@ class PredictCog(commands.Cog):
         await local_set_bet_close_time(주제, target_timestamp)
         await interaction.response.send_message(f"✅ [{주제}] 예측이 {날짜} {시간}에 자동 마감되도록 예약되었습니다!", ephemeral=False)
 
-    @app_commands.command(name="내베팅", description="내가 참여한 예측 내역과 베팅한 알의 개수를 확인합니다.")
+    @app_commands.command(name="내베팅", description="내가 참여한 예측 내역과 베팅한 포인트를 확인합니다.")
     async def my_bets(self, interaction: discord.Interaction):
         records = await local_get_user_all_bets(interaction.user.id)
 
@@ -200,7 +200,7 @@ class PredictCog(commands.Cog):
             status = row['status']
 
             opt_name = row['option_a'] if opt_letter == 'A' else row['option_b']
-            text = f"{topic}\n👉 `{opt_name}`에 {amount}개 베팅"
+            text = f"{topic}\n👉 `{opt_name}`에 {format_num(amount)}P 베팅"
 
             if status == 'active': active_bets.append(text)
             elif status == 'closed': closed_bets.append(text)

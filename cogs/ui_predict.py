@@ -1,8 +1,7 @@
 import discord
-import math
 import time
 import aiosqlite
-from utils.database import consume_item, add_item, get_item_amount
+from utils.stats import spend_points, add_points, get_points, format_num
 
 # 💡 predictions.db 전용 독립 비동기 로컬 데이터 전송 함수군
 async def local_get_bet_session(topic):
@@ -82,11 +81,9 @@ def generate_progress_bar(total_a, total_b):
     total = total_a + total_b
     if total == 0:
         return "⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛"
-
     ratio_a = total_a / total
     blocks_a = round(ratio_a * 10)
     blocks_b = 10 - blocks_a
-
     return ("🟥" * blocks_a) + ("🟦" * blocks_b)
 
 async def generate_bet_embed(topic, opt_a, opt_b, status="active"):
@@ -105,16 +102,16 @@ async def generate_bet_embed(topic, opt_a, opt_b, status="active"):
     title_prefix = "🟢 [진행중]" if status == "active" else "🔴 [마감됨]"
 
     if status == "active":
-        description = "👇 아래 버튼을 누른 후 베팅할 서사급 알 개수를 직접 입력하세요!"
+        description = "👇 아래 버튼을 누른 후 베팅할 **포인트**를 직접 입력하세요!"
     else:
         description = "🛑 이 예측은 베팅이 마감되었습니다."
 
     embed = discord.Embed(title=f"{title_prefix} 예측: {topic}", description=description, color=color)
 
-    embed.add_field(name=f"🟥 옵션 A: {opt_a}", value=f"📊 배당률: {odds_a}배\n(누적: {total_a}개)", inline=True)
-    embed.add_field(name=f"🟦 옵션 B: {opt_b}", value=f"📊 배당률: {odds_b}배\n(누적: {total_b}개)", inline=True)
+    embed.add_field(name=f"🟥 옵션 A: {opt_a}", value=f"📊 배당률: {odds_a}배\n(누적: {format_num(total_a)}P)", inline=True)
+    embed.add_field(name=f"🟦 옵션 B: {opt_b}", value=f"📊 배당률: {odds_b}배\n(누적: {format_num(total_b)}P)", inline=True)
 
-    embed.add_field(name="현재 베팅 비율", value=f"{gauge}\n💰 총 상금 풀: {total_pool}개 (수수료 5% 제외 후 분배)", inline=False)
+    embed.add_field(name="현재 베팅 비율", value=f"{gauge}\n💰 총 상금 풀: {format_num(total_pool)}P (수수료 5% 제외 후 분배)", inline=False)
 
     return embed
 
@@ -122,14 +119,14 @@ class BetInputModal(discord.ui.Modal):
     def __init__(self, topic: str, option: str, opt_name: str, view: discord.ui.View):
         super().__init__(title=f"{opt_name}에 베팅하기")
         self.topic = topic
-        self.option = option # 'A' or 'B'
+        self.option = option  # 'A' or 'B'
         self.view = view
 
         self.amount = discord.ui.TextInput(
-            label="베팅할 서사급 알의 개수를 입력하세요",
-            placeholder="숫자만 입력 (예: 10)",
+            label="베팅할 포인트를 입력하세요",
+            placeholder="숫자만 입력 (예: 100)",
             min_length=1,
-            max_length=5,
+            max_length=9,
             required=True
         )
         self.add_item(self.amount)
@@ -141,7 +138,7 @@ class BetInputModal(discord.ui.Modal):
             return await interaction.response.send_message("❌ 올바른 숫자를 입력해주세요.", ephemeral=True)
 
         if bet_amount <= 0:
-            return await interaction.response.send_message("❌ 1개 이상의 알을 베팅해야 합니다.", ephemeral=True)
+            return await interaction.response.send_message("❌ 1P 이상 베팅해야 합니다.", ephemeral=True)
 
         user_id = interaction.user.id
 
@@ -149,10 +146,10 @@ class BetInputModal(discord.ui.Modal):
         if existing_bet and existing_bet[0] != self.option:
             return await interaction.response.send_message("❌ 이미 반대쪽 옵션에 베팅하셨습니다! 양방향 베팅은 불가능합니다.", ephemeral=True)
 
-        success = await consume_item(user_id, "서사급 알", bet_amount)
+        success = await spend_points(user_id, bet_amount)
         if not success:
-            current_eggs = await get_item_amount(user_id, "서사급 알")
-            return await interaction.response.send_message(f"❌ 서사급 알이 부족합니다! (현재 보유량: {current_eggs}개)", ephemeral=True)
+            current = await get_points(user_id)
+            return await interaction.response.send_message(f"❌ 포인트가 부족합니다! (현재 보유: {format_num(current)}P)", ephemeral=True)
 
         await local_add_bet_record(self.topic, user_id, self.option, bet_amount)
 
@@ -160,7 +157,7 @@ class BetInputModal(discord.ui.Modal):
         new_embed = await generate_bet_embed(self.topic, session['option_a'], session['option_b'], session['status'])
 
         await interaction.message.edit(embed=new_embed, view=self.view)
-        await interaction.response.send_message(f"✅ 성공적으로 `{bet_amount}`개의 서사급 알을 베팅했습니다!", ephemeral=True)
+        await interaction.response.send_message(f"✅ 성공적으로 `{format_num(bet_amount)}P`를 베팅했습니다!", ephemeral=True)
 
 class BettingView(discord.ui.View):
     def __init__(self, topic: str, opt_a_name: str, opt_b_name: str, disabled: bool = False):

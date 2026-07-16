@@ -112,9 +112,9 @@ def render_team_image(title, blue, red, mvp_name=None, winner=None):
         win = winner == tno
         d.rounded_rectangle((x, 100, x + 440, H - 40), radius=22,
                             fill=(30, 40, 70) if tno == 1 else (60, 28, 38),
-                            outline=(255, 205, 90) if win else color, width=6 if win else 3)
+                            outline=(70, 150, 255) if win else color, width=6 if win else 3)
         head = label + ("   WIN" if win else "")
-        d.text((x + 24, 122), head, font=f_team, fill=color if not win else (255, 205, 90))
+        d.text((x + 24, 122), head, font=f_team, fill=color if not win else (90, 160, 255))
         y = 190
         for i, (name, sub) in enumerate(members, 1):
             d.text((x + 28, y), f"{i}. {name}", font=f_row, fill=(240, 240, 250))

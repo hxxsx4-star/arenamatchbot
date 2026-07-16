@@ -33,6 +33,7 @@ class MatchBot(commands.Bot):
 
         extensions = [
             "cogs.sync",       # 슬래시 커맨드 수동 동기화
+            "cogs.registration",  # 닉네임/라인 등록
             "cogs.match",      # 내전 (내전 로그 → 공유 큐)
             "cogs.auction",    # 경매 (경매 사이트는 추후 확장)
             "cogs.predict",    # 승부예측

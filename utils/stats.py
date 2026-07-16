@@ -129,4 +129,49 @@ async def reduce_warning(user_id: int, count: int) -> tuple[int, int]:
             _save_stats_nolock(stats)
             return old_warn, new_warn
 
+    return await asyncio.to_thread(_task)# ==========================================
+# 🎮 게임 닉네임 / 라인 (내전용 · stats.json 공유)
+# ==========================================
+_NICK_KEY = {"lol": "롤닉", "val": "발닉"}
+
+
+async def set_nickname(user_id: int, game: str, nick: str):
+    key = _NICK_KEY.get(game)
+    if not key:
+        return
+    def _task():
+        with lock:
+            stats = _load_stats_nolock()
+            rec = ensure_user(stats, str(user_id))
+            rec[key] = nick
+            _save_stats_nolock(stats)
+    await asyncio.to_thread(_task)
+
+
+async def get_nickname(user_id: int, game: str):
+    key = _NICK_KEY.get(game)
+    def _task():
+        with lock:
+            stats = _load_stats_nolock()
+            return stats.get(str(user_id), {}).get(key)
+    return await asyncio.to_thread(_task)
+
+
+async def set_lanes(user_id: int, main_lane: str, sub_lane: str):
+    def _task():
+        with lock:
+            stats = _load_stats_nolock()
+            rec = ensure_user(stats, str(user_id))
+            rec["주라인"] = main_lane
+            rec["부라인"] = sub_lane
+            _save_stats_nolock(stats)
+    await asyncio.to_thread(_task)
+
+
+async def get_lanes(user_id: int):
+    def _task():
+        with lock:
+            stats = _load_stats_nolock()
+            rec = stats.get(str(user_id), {})
+            return rec.get("주라인"), rec.get("부라인")
     return await asyncio.to_thread(_task)

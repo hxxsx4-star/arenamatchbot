@@ -272,8 +272,8 @@ class MatchCog(commands.Cog):
         )
         log_embed.set_footer(text=f"선착순 {len(member_list)}명 참여")
 
-        # 로그는 직접 올리지 않고 공유 큐에 적재 → 로그봇이 내전 로그 채널에 기록
-        enqueue_embed(MATCH_LOG_CH, log_embed.to_dict())
+        # 로그는 직접 올리지 않고 공유 큐에 적재 → 로그봇이 내전 로그 채널에 기록 (대상 서버만)
+        enqueue_embed(MATCH_LOG_CH, log_embed.to_dict(), guild=interaction.guild)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(MatchCog(bot))

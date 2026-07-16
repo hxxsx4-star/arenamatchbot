@@ -35,6 +35,28 @@ ITEM_GIVE_LOG_CH = 1526638185860300870   # 아이템 지급 로그
 ITEM_TAKE_LOG_CH = 1526638215090671687   # 아이템 회수 로그
 SHOP_LOG_CH = 1526638410654289940        # 상점 구매 로그
 AUCTION_LOG_CH = 1526700208610607306     # 경매 로그 (관리자 전용 채널)
+VOICE_POINT_LOG_CH = 1527251428148645898 # 잠수 포인트 로그 (통화방 유지 시 포인트 획득)
+WARN_LOG_CH = 1527251596218728458        # 경고 로그
+WARN_REDUCE_LOG_CH = 1527251626514190486 # 경고 차감 로그
+BAN_LOG_CH = 1527251655098372177         # 서버 차단 로그
+
+# ───────── 대상 서버 ─────────
+# 모든 로그는 이 서버(길드)에서 일어난 일만 기록합니다.
+GUILD_ID = 1526593162645209188
+
+
+def is_target_guild(guild) -> bool:
+    """지정 서버(GUILD_ID)의 이벤트만 로깅하도록 하는 필터.
+
+    guild 는 discord.Guild 객체나 정수 ID 를 받습니다. None 이면 False.
+    """
+    if guild is None:
+        return False
+    try:
+        gid = guild.id if hasattr(guild, "id") else int(guild)
+    except (TypeError, ValueError):
+        return False
+    return gid == GUILD_ID
 
 # 채널 미지정(비활성). 나중에 채널 ID를 넣으면 자동으로 활성화됩니다.
 WALK_LOG_CH = 0        # 산책 로그
@@ -81,12 +103,15 @@ def init_log_queue():
     _table_ready = True
 
 
-def enqueue_embed(channel_id, embed_dict):
+def enqueue_embed(channel_id, embed_dict, guild=None):
     """생산자(펫/메인/내전 봇)용: 임베드 dict 를 공유 큐에 적재합니다.
 
     channel_id 가 0/None 이면(비활성 로그) 조용히 무시합니다.
+    guild 를 넘기면 지정 서버(GUILD_ID)의 이벤트가 아닐 때 로깅하지 않습니다.
     """
     if not channel_id:
+        return
+    if guild is not None and not is_target_guild(guild):
         return
     try:
         if not _table_ready:
@@ -105,10 +130,11 @@ def enqueue_embed(channel_id, embed_dict):
         print(f"🚨 [로그 큐 적재 실패] 채널 ID: {channel_id} | 에러: {e}")
 
 
-async def send_log_embed(bot, channel_id, title, description, user, color, extra_footer=""):
+async def send_log_embed(bot, channel_id, title, description, user, color, extra_footer="", guild=None):
     """기존 시그니처 호환용 헬퍼. 내부적으로는 큐에 적재합니다.
 
     (bot 인자는 하위호환을 위해 남겨두었고 사용하지 않습니다.)
+    guild 를 넘기면 지정 서버(GUILD_ID)의 이벤트가 아닐 때 로깅하지 않습니다.
     """
     try:
         embed = discord.Embed(
@@ -119,7 +145,7 @@ async def send_log_embed(bot, channel_id, title, description, user, color, extra
             footer_text += f" | {extra_footer}"
         icon = user.display_avatar.url if getattr(user, "display_avatar", None) else None
         embed.set_footer(text=footer_text, icon_url=icon)
-        enqueue_embed(channel_id, embed.to_dict())
+        enqueue_embed(channel_id, embed.to_dict(), guild=guild)
     except Exception as e:
         print(f"🚨 [로그 전송 실패] 채널 ID: {channel_id} | 에러: {e}")
 

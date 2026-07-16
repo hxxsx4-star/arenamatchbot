@@ -114,7 +114,58 @@ class AuctionRoom:
         self._timer_task: Optional[asyncio.Task] = None
         self._broadcast: Optional[Callable[[], Awaitable[None]]] = None
         self._on_finish: Optional[Callable[["AuctionRoom"], Awaitable[None]]] = None
+        self._save: Optional[Callable[["AuctionRoom"], None]] = None
         self._lock = asyncio.Lock()
+
+    # ---------- 영속화(재시작 복구) ----------
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "host_token": self.host_token, "observer_token": self.observer_token,
+            "title": self.title, "team_count": self.team_count, "team_size": self.team_size,
+            "total_points": self.total_points, "show_order": self.show_order,
+            "bid_mode": self.bid_mode.value, "fixed_unit": self.fixed_unit, "ratio_percent": self.ratio_percent,
+            "bid_time": self.bid_time, "extend_time": self.extend_time,
+            "captains": [vars(c) for c in self.captains],
+            "members": [vars(m) for m in self.members],
+            "phase": self.phase.value, "order": self.order, "current_pos": self.current_pos,
+            "current_mid": self.current_mid, "high_bid": self.high_bid, "high_cid": self.high_cid,
+            "timer_remaining": self.timer_remaining, "created_at": self.created_at, "events": self.events,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AuctionRoom":
+        self = cls.__new__(cls)
+        self.id = d["id"]; self.host_token = d["host_token"]; self.observer_token = d["observer_token"]
+        self.title = d["title"]; self.team_count = d["team_count"]; self.team_size = d["team_size"]
+        self.total_points = d["total_points"]; self.show_order = d["show_order"]
+        self.bid_mode = BidUnitMode(d["bid_mode"]); self.fixed_unit = d["fixed_unit"]
+        self.ratio_percent = d["ratio_percent"]
+        self.bid_time = d["bid_time"]; self.extend_time = d["extend_time"]
+        self.captains = [Captain(**c) for c in d["captains"]]
+        self.members = [Member(**m) for m in d["members"]]
+        self.phase = Phase(d["phase"]); self.order = d["order"]; self.current_pos = d["current_pos"]
+        self.current_mid = d["current_mid"]; self.high_bid = d["high_bid"]; self.high_cid = d["high_cid"]
+        self.timer_remaining = d["timer_remaining"]; self.created_at = d["created_at"]
+        self.events = d.get("events", [])
+        self._timer_task = None; self._broadcast = None; self._on_finish = None; self._save = None
+        self._lock = asyncio.Lock()
+        return self
+
+    def _do_save(self):
+        if self._save:
+            try:
+                self._save(self)
+            except Exception as e:
+                print(f"[경매 저장 실패] {e}")
+
+    async def resume(self):
+        """재시작 후 복구 시 호출. 진행 중이던 경매의 타이머를 다시 시작합니다."""
+        if self.phase == Phase.BIDDING and self.current_mid:
+            self.timer_remaining = self.bid_time  # 안전하게 타이머를 새로 부여
+            await self._emit()
+            self._start_timer()
+        elif self.phase == Phase.SOLD:
+            await self._advance()
 
     # ---------- 조회 헬퍼 ----------
     def get_captain(self, cid: str) -> Optional[Captain]:
@@ -179,9 +230,10 @@ class AuctionRoom:
         return out
 
     # ---------- 진행 제어 ----------
-    def bind(self, broadcast, on_finish):
+    def bind(self, broadcast, on_finish, save=None):
         self._broadcast = broadcast
         self._on_finish = on_finish
+        self._save = save
 
     async def _emit(self):
         if self._broadcast:
@@ -203,6 +255,7 @@ class AuctionRoom:
             if self.phase != Phase.LOBBY:
                 return
             random.shuffle(self.members)
+            self._do_save()
 
     async def _advance(self):
         """다음 팀원 경매 시작 (없으면 종료)."""
@@ -218,6 +271,7 @@ class AuctionRoom:
             if nxt >= len(self.order):
                 self.phase = Phase.FINISHED
                 self.current_mid = None
+                self._do_save()
                 await self._emit()
                 if self._on_finish:
                     await self._on_finish(self)
@@ -228,6 +282,7 @@ class AuctionRoom:
             self.high_cid = None
             self.timer_remaining = self.bid_time
             self.phase = Phase.BIDDING
+            self._do_save()
         await self._emit()
         self._start_timer()
 
@@ -274,6 +329,7 @@ class AuctionRoom:
             # 안티 스나이핑: 남은 시간이 연장 시간보다 적으면 연장
             if self.timer_remaining < self.extend_time:
                 self.timer_remaining = self.extend_time
+            self._do_save()
         await self._emit()
         return True, "입찰 완료"
 
@@ -292,6 +348,7 @@ class AuctionRoom:
             elif m:
                 self._log("unsold", member=m.name)
             self.phase = Phase.SOLD
+            self._do_save()
         await self._emit()
         await asyncio.sleep(3)  # 결과 잠깐 표시
         await self._advance()

@@ -75,16 +75,69 @@ def _abs(path: str, request: Request) -> str:
     return f"{base}{path}"
 
 
+# 경매 방을 디스크에 저장할 디렉터리 (재시작해도 복구되도록 공유 볼륨에 저장)
+AUCTION_DIR = os.path.join(
+    os.environ.get("ARENA_SHARED_DIR", "/home/hxxsx4/shared_data"), "auctions"
+)
+
+
 class RoomManager:
     def __init__(self):
         self.rooms: dict[str, AuctionRoom] = {}
         self.conns: dict[str, set[WebSocket]] = {}
 
+    def _bind(self, room: AuctionRoom):
+        room.bind(
+            broadcast=lambda rid=room.id: self.broadcast(rid),
+            on_finish=post_auction_result,
+            save=self._persist,
+        )
+
     def add(self, room: AuctionRoom):
         self.rooms[room.id] = room
         self.conns[room.id] = set()
-        room.bind(broadcast=lambda: self.broadcast(room.id),
-                  on_finish=post_auction_result)
+        self._bind(room)
+        self._persist(room)  # 생성 즉시 저장
+
+    def _persist(self, room: AuctionRoom):
+        """경매 상태를 파일에 원자적으로 저장."""
+        try:
+            os.makedirs(AUCTION_DIR, exist_ok=True)
+            path = os.path.join(AUCTION_DIR, f"{room.id}.json")
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(room.to_dict(), f, ensure_ascii=False)
+            os.replace(tmp, path)
+        except Exception as e:
+            print(f"[경매 저장 실패] {room.id}: {e}")
+
+    async def load_all(self):
+        """재시작 시 저장된 경매를 모두 복구하고 진행 중이던 것은 타이머 재개."""
+        if not os.path.isdir(AUCTION_DIR):
+            return
+        loaded = 0
+        for name in os.listdir(AUCTION_DIR):
+            if not name.endswith(".json"):
+                continue
+            try:
+                fpath = os.path.join(AUCTION_DIR, name)
+                with open(fpath, encoding="utf-8") as f:
+                    data = json.load(f)
+                # 종료된 지 14일 지난 경매는 정리(파일 삭제)
+                import time as _t
+                if data.get("phase") == "finished" and (_t.time() - data.get("created_at", 0)) > 14 * 86400:
+                    os.remove(fpath)
+                    continue
+                room = AuctionRoom.from_dict(data)
+                self.rooms[room.id] = room
+                self.conns[room.id] = set()
+                self._bind(room)
+                await room.resume()
+                loaded += 1
+            except Exception as e:
+                print(f"[경매 복구 실패] {name}: {e}")
+        if loaded:
+            print(f"♻️ 저장된 경매 {loaded}개 복구 완료")
 
     def get(self, rid: str) -> AuctionRoom | None:
         return self.rooms.get(rid)
@@ -106,6 +159,11 @@ class RoomManager:
 
 
 manager = RoomManager()
+
+
+@app.on_event("startup")
+async def _load_saved_auctions():
+    await manager.load_all()
 
 
 # ============ 페이지 ============

@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="{{ p }}/static/style.css">
 </head>
 <body>
+  {% include "_nav.html" %}
   <div class="wrap">
     <div class="page-title" style="text-align:left"><h1 style="font-size:28px">🔒 관리자 · 경매 로그</h1></div>
 
@@ -114,5 +115,6 @@ PUBLIC_BASE_URL=https://arenamatch.p-e.kr
     .logl .tm { color:var(--muted); font-size:12px; margin-right:8px; }
   </style>
   {% endif %}
+  {% include "_foot.html" %}
 </body>
 </html>

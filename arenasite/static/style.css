@@ -10,14 +10,28 @@ body{margin:0;color:var(--ink);min-height:100vh;
   font-family:"Pretendard","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;
   -webkit-font-smoothing:antialiased;
   background:
-    radial-gradient(1100px 520px at 50% -10%, rgba(238,21,21,.30), transparent 62%),
-    radial-gradient(820px 460px at 92% 4%, rgba(245,180,0,.12), transparent 55%),
-    radial-gradient(760px 500px at 6% 20%, rgba(47,107,255,.12), transparent 55%),
-    linear-gradient(180deg,#0e1322 0%, #0a0d18 100%);
+    radial-gradient(900px 480px at 50% -12%, rgba(238,21,21,.34), transparent 60%),
+    radial-gradient(720px 430px at 88% 4%, rgba(245,180,0,.14), transparent 55%),
+    radial-gradient(680px 470px at 6% 22%, rgba(47,107,255,.17), transparent 55%),
+    radial-gradient(1100px 620px at 50% 118%, rgba(238,21,21,.13), transparent 62%),
+    linear-gradient(180deg,#0b1020 0%, #0a0d18 55%, #070a12 100%);
   background-attachment:fixed;background-repeat:no-repeat}
-/* 아레나 바닥 텍스처(옅은 대각선 라인) */
-body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;
-  background-image:repeating-linear-gradient(115deg, rgba(255,255,255,.028) 0 1px, transparent 1px 26px)}
+/* 테크 그리드 (상단 중심으로 페이드) */
+body::before{content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;opacity:.55;
+  background-image:
+    linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px);
+  background-size:46px 46px;
+  -webkit-mask:radial-gradient(125% 85% at 50% -5%, #000 0%, transparent 68%);
+  mask:radial-gradient(125% 85% at 50% -5%, #000 0%, transparent 68%)}
+/* 스포트라이트 빔 + 비네트 (은은한 펄스) */
+body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    conic-gradient(from 180deg at 50% -12%, transparent 41%, rgba(255,255,255,.06) 50%, transparent 59%),
+    radial-gradient(135% 92% at 50% 120%, transparent 52%, rgba(0,0,0,.52) 100%);
+  animation:arenaGlow 9s ease-in-out infinite alternate}
+@keyframes arenaGlow{from{opacity:.72}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){body::after{animation:none}}
 a{color:inherit;text-decoration:none}
 h1,h2,h3{margin:0}
 .wrap{max-width:1080px;margin:0 auto;padding:26px 18px 60px}

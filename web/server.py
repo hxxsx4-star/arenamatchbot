@@ -37,6 +37,7 @@ BASE = Path(__file__).resolve().parent
 app = FastAPI(title="아레나 경매")
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
+templates.env.globals["site_name"] = os.environ.get("SITE_NAME", "아레나 볼")
 
 # 공개 URL (링크 생성용). 배포 시 환경변수로 지정.
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
@@ -174,12 +175,12 @@ async def _load_saved_auctions():
 # ============ 페이지 ============
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse(request, "index.html", {"p": _p(request)})
+    return templates.TemplateResponse(request, "index.html", {"p": _p(request), "session_admin": _is_admin(request)})
 
 
 @app.get("/create", response_class=HTMLResponse)
 async def create_page(request: Request):
-    return templates.TemplateResponse(request, "create.html", {"p": _p(request)})
+    return templates.TemplateResponse(request, "create.html", {"p": _p(request), "session_admin": _is_admin(request)})
 
 
 @app.post("/api/auctions")
@@ -235,12 +236,12 @@ async def create_auction(request: Request):
 async def room_page(request: Request, rid: str):
     room = manager.get(rid)
     if not room:
-        return templates.TemplateResponse(request, "gone.html", {"p": _p(request)}, status_code=404)
+        return templates.TemplateResponse(request, "gone.html", {"p": _p(request), "session_admin": _is_admin(request)}, status_code=404)
     role, cid, cname = _resolve_role(room, request.query_params)
     if role is None:
-        return templates.TemplateResponse(request, "gone.html", {"p": _p(request)}, status_code=403)
+        return templates.TemplateResponse(request, "gone.html", {"p": _p(request), "session_admin": _is_admin(request)}, status_code=403)
     return templates.TemplateResponse(request, "room.html", {
-        "p": _p(request), "rid": rid, "role": role,
+        "p": _p(request), "session_admin": _is_admin(request), "rid": rid, "role": role,
         "cid": cid or "", "cname": cname or "",
         "title": room.title,
     })
@@ -333,7 +334,7 @@ async def get_state(rid: str):
 async def auth_login(request: Request):
     if not _oauth_ready():
         return templates.TemplateResponse(request, "admin.html",
-                                          {"p": _p(request), "setup_needed": True, "admin": False})
+                                          {"p": _p(request), "session_admin": _is_admin(request), "setup_needed": True, "admin": False})
     state = secrets.token_urlsafe(16)
     request.session["oauth_state"] = state
     from urllib.parse import urlencode
@@ -376,7 +377,7 @@ async def auth_callback(request: Request):
     if uid not in ADMIN_IDS:
         request.session.clear()
         return templates.TemplateResponse(request, "admin.html",
-                                          {"p": _p(request), "denied": True, "admin": False,
+                                          {"p": _p(request), "session_admin": _is_admin(request), "denied": True, "admin": False,
                                            "who": user.get("username", "")}, status_code=403)
     request.session["uid"] = uid
     request.session["uname"] = user.get("global_name") or user.get("username", "")
@@ -393,11 +394,11 @@ async def auth_logout(request: Request):
 async def admin_page(request: Request):
     if not _oauth_ready():
         return templates.TemplateResponse(request, "admin.html",
-                                          {"p": _p(request), "setup_needed": True, "admin": False})
+                                          {"p": _p(request), "session_admin": _is_admin(request), "setup_needed": True, "admin": False})
     if not _is_admin(request):
         return RedirectResponse("/auth/login")
     return templates.TemplateResponse(request, "admin.html",
-                                      {"p": _p(request), "admin": True, "uname": request.session.get("uname", "")})
+                                      {"p": _p(request), "session_admin": _is_admin(request), "admin": True, "uname": request.session.get("uname", "")})
 
 
 @app.get("/api/admin/auctions")

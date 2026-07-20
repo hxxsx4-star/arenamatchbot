@@ -1,0 +1,33 @@
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <svg class="emblem" viewBox="0 0 64 64" aria-hidden="true">
+        <defs><linearGradient id="navAauc" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#ff7a4d"/><stop offset=".55" stop-color="#ee1515"/>
+          <stop offset="1" stop-color="#b60d0d"/></linearGradient></defs>
+        <path d="M32 2.5 58 17.25 V46.75 L32 61.5 6 46.75 V17.25 Z" fill="#161c2b"
+              stroke="url(#navAauc)" stroke-width="3" stroke-linejoin="round"/>
+        <path d="M19 47 32 15 45 47" fill="none" stroke="url(#navAauc)"
+              stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M24.5 36.5 H39.5" fill="none" stroke="url(#navAauc)"
+              stroke-width="6.5" stroke-linecap="round"/>
+      </svg>
+      <b>{{ site_name|default("아레나 볼") }}</b>
+    </a>
+    <nav class="menu">
+      <a href="/summoners">소환사 관리</a>
+      <a href="/betting">모집/참여</a>
+      <a href="/records">기록실</a>
+      <a href="/ladder">사다리타기</a>
+      <a href="{{ p }}/" class="active">경매</a>
+    </nav>
+    <div class="nav-right">
+      {% if session_admin %}
+        <span class="admin-badge">👑 관리자</span>
+        <a class="nav-ghost" href="{{ p }}/auth/logout">로그아웃</a>
+      {% else %}
+        <a class="nav-ghost" href="/auth/login">관리자</a>
+      {% endif %}
+    </div>
+  </div>
+</header>

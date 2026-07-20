@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="{{ p }}/static/style.css">
 </head>
 <body>
+  {% include "_nav.html" %}
   <div class="wrap">
     <div class="page-title">
       <h1>경매 생성</h1>
@@ -135,5 +136,6 @@
 
   <script>window.APREFIX="{{ p }}";</script>
   <script src="{{ p }}/static/create.js"></script>
+  {% include "_foot.html" %}
 </body>
 </html>

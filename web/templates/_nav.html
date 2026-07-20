@@ -22,6 +22,9 @@
       <a href="{{ p }}/" class="active">경매</a>
     </nav>
     <div class="nav-right">
+      {% if discord_invite %}
+        <a class="nav-discord" href="{{ discord_invite }}" target="_blank" rel="noopener">Discord 연동</a>
+      {% endif %}
       {% if session_admin %}
         <span class="admin-badge">👑 관리자</span>
         <a class="nav-ghost" href="{{ p }}/auth/logout">로그아웃</a>

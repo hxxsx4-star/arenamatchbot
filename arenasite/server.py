@@ -39,13 +39,29 @@ app.add_middleware(
     max_age=60 * 60 * 24 * 7,
     same_site="lax",
 )
+# 항상 관리자로 인정할 디스코드 ID(안전용 fallback). 비워둬도 됨.
 ADMIN_IDS = set(filter(None, os.environ.get(
     "ADMIN_DISCORD_IDS", "1505506970361139210,1517544497817583739"
 ).replace(" ", "").split(",")))
+# 이 서버(길드)에서 '서버 관리' 이상 권한을 가진 사람은 누구나 사이트 관리자.
+GUILD_ID = int(os.environ.get("GUILD_ID", "1526593162645209188"))
+# Discord 권한 비트: ADMINISTRATOR(0x8) | MANAGE_GUILD(0x20)
+MANAGE_MASK = 0x8 | 0x20
 DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "").strip()
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "").strip()
 DISCORD_INVITE = os.environ.get("DISCORD_INVITE_URL", "").strip()
 DISCORD_API = "https://discord.com/api"
+
+
+def _has_manage_perm(guilds: list) -> bool:
+    """OAuth guilds 응답에서 대상 서버의 관리 권한 보유 여부를 판단."""
+    for g in guilds or []:
+        if str(g.get("id")) == str(GUILD_ID):
+            try:
+                return bool(int(g.get("permissions", 0)) & MANAGE_MASK)
+            except (TypeError, ValueError):
+                return False
+    return False
 
 
 def _oauth_ready() -> bool:
@@ -58,7 +74,8 @@ def _redirect_uri(request: Request) -> str:
 
 
 def _is_admin(request: Request) -> bool:
-    return str(request.session.get("uid", "")) in ADMIN_IDS
+    # 로그인 시 서버 관리 권한이 확인되면 session["admin"] 이 True. fallback 으로 고정 ID 도 인정.
+    return bool(request.session.get("admin")) or str(request.session.get("uid", "")) in ADMIN_IDS
 
 
 def _ctx(request: Request, **kw) -> dict:
@@ -250,7 +267,7 @@ async def auth_login(request: Request):
         "client_id": DISCORD_CLIENT_ID,
         "redirect_uri": _redirect_uri(request),
         "response_type": "code",
-        "scope": "identify",
+        "scope": "identify guilds",
         "state": state,
     })
     return RedirectResponse(f"{DISCORD_API}/oauth2/authorize?{q}")
@@ -276,19 +293,23 @@ async def auth_callback(request: Request):
         if tok.status_code != 200:
             raise HTTPException(400, "토큰 교환 실패")
         access = tok.json().get("access_token")
-        me = await cli.get(f"{DISCORD_API}/users/@me",
-                           headers={"Authorization": f"Bearer {access}"})
+        auth_hdr = {"Authorization": f"Bearer {access}"}
+        me = await cli.get(f"{DISCORD_API}/users/@me", headers=auth_hdr)
         if me.status_code != 200:
             raise HTTPException(400, "유저 조회 실패")
+        guilds_resp = await cli.get(f"{DISCORD_API}/users/@me/guilds", headers=auth_hdr)
     user = me.json()
     uid = str(user.get("id"))
-    if uid not in ADMIN_IDS:
+    guilds = guilds_resp.json() if guilds_resp.status_code == 200 else []
+    is_admin = _has_manage_perm(guilds) or uid in ADMIN_IDS
+    if not is_admin:
         request.session.clear()
         return HTMLResponse(
-            f"<h3>접근 거부</h3><p>{user.get('username','')} 님은 관리자가 아닙니다.</p>"
+            f"<h3>접근 거부</h3><p>{user.get('username','')} 님은 이 서버의 관리 권한이 없습니다.</p>"
             "<a href='/'>← 홈</a>", status_code=403)
     request.session["uid"] = uid
     request.session["uname"] = user.get("global_name") or user.get("username", "")
+    request.session["admin"] = True
     return RedirectResponse(request.query_params.get("next") or "/")
 
 

@@ -49,13 +49,25 @@ app.add_middleware(
     max_age=60 * 60 * 24 * 7,
     same_site="lax",
 )
-# 관리자 디스코드 고유 ID (환경변수 ADMIN_DISCORD_IDS 로 재정의 가능, 콤마 구분)
+# 관리자 디스코드 고유 ID (안전용 fallback). 서버 관리 권한자는 아래 GUILD 검사로 인정.
 ADMIN_IDS = set(filter(None, os.environ.get(
     "ADMIN_DISCORD_IDS", "1505506970361139210,1517544497817583739"
 ).replace(" ", "").split(",")))
+GUILD_ID = int(os.environ.get("GUILD_ID", "1526593162645209188"))
+MANAGE_MASK = 0x8 | 0x20  # ADMINISTRATOR | MANAGE_GUILD
 DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "").strip()
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "").strip()
 DISCORD_API = "https://discord.com/api"
+
+
+def _has_manage_perm(guilds: list) -> bool:
+    for g in guilds or []:
+        if str(g.get("id")) == str(GUILD_ID):
+            try:
+                return bool(int(g.get("permissions", 0)) & MANAGE_MASK)
+            except (TypeError, ValueError):
+                return False
+    return False
 
 
 def _oauth_ready() -> bool:
@@ -68,7 +80,7 @@ def _redirect_uri(request: Request) -> str:
 
 
 def _is_admin(request: Request) -> bool:
-    return str(request.session.get("uid", "")) in ADMIN_IDS
+    return bool(request.session.get("admin")) or str(request.session.get("uid", "")) in ADMIN_IDS
 
 
 def _p(request: Request) -> str:
@@ -342,7 +354,7 @@ async def auth_login(request: Request):
         "client_id": DISCORD_CLIENT_ID,
         "redirect_uri": _redirect_uri(request),
         "response_type": "code",
-        "scope": "identify",
+        "scope": "identify guilds",
         "state": state,
     })
     return RedirectResponse(f"{DISCORD_API}/oauth2/authorize?{q}")
@@ -368,20 +380,23 @@ async def auth_callback(request: Request):
         if tok.status_code != 200:
             raise HTTPException(status_code=400, detail="토큰 교환 실패")
         access = tok.json().get("access_token")
-        me = await cli.get(f"{DISCORD_API}/users/@me",
-                           headers={"Authorization": f"Bearer {access}"})
+        auth_hdr = {"Authorization": f"Bearer {access}"}
+        me = await cli.get(f"{DISCORD_API}/users/@me", headers=auth_hdr)
         if me.status_code != 200:
             raise HTTPException(status_code=400, detail="유저 조회 실패")
+        guilds_resp = await cli.get(f"{DISCORD_API}/users/@me/guilds", headers=auth_hdr)
     user = me.json()
     uid = str(user.get("id"))
-    if uid not in ADMIN_IDS:
+    guilds = guilds_resp.json() if guilds_resp.status_code == 200 else []
+    if not (_has_manage_perm(guilds) or uid in ADMIN_IDS):
         request.session.clear()
         return templates.TemplateResponse(request, "admin.html",
                                           {"p": _p(request), "session_admin": _is_admin(request), "denied": True, "admin": False,
                                            "who": user.get("username", "")}, status_code=403)
     request.session["uid"] = uid
     request.session["uname"] = user.get("global_name") or user.get("username", "")
-    return RedirectResponse("/admin")
+    request.session["admin"] = True
+    return RedirectResponse(f"{_p(request)}/admin")
 
 
 @app.get("/auth/logout")

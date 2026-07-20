@@ -5,13 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}{{ site_name }}{% endblock %} · 종합게임 아레나</title>
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23ee1515' stroke='%23222' stroke-width='5'/><path d='M4 50h92' stroke='%23222' stroke-width='9'/><circle cx='50' cy='50' r='15' fill='white' stroke='%23222' stroke-width='6'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><path d='M32 3 58 17.25 V46.75 L32 61 6 46.75 V17.25 Z' fill='%23161c2b' stroke='%23ee1515' stroke-width='3'/><path d='M19 47 32 15 45 47' fill='none' stroke='%23ff6a3d' stroke-width='6.5' stroke-linecap='round' stroke-linejoin='round'/><path d='M24.5 36.5 H39.5' fill='none' stroke='%23ff6a3d' stroke-width='6.5' stroke-linecap='round'/></svg>">
 </head>
 <body>
+{% macro emblem(gid, cls='') -%}
+<svg class="emblem {{ cls }}" viewBox="0 0 64 64" aria-hidden="true">
+  <defs>
+    <linearGradient id="{{ gid }}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff7a4d"/>
+      <stop offset=".55" stop-color="#ee1515"/>
+      <stop offset="1" stop-color="#b60d0d"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 2.5 58 17.25 V46.75 L32 61.5 6 46.75 V17.25 Z" fill="#161c2b"
+        stroke="url(#{{ gid }})" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M19 47 32 15 45 47" fill="none" stroke="url(#{{ gid }})"
+        stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24.5 36.5 H39.5" fill="none" stroke="url(#{{ gid }})"
+        stroke-width="6.5" stroke-linecap="round"/>
+</svg>
+{%- endmacro %}
 <header class="nav">
   <div class="nav-inner">
     <a class="brand" href="/">
-      <span class="pokeball"></span>
+      {{ emblem('navA') }}
       <b>{{ site_name }}</b>
     </a>
     <nav class="menu">
@@ -39,7 +56,7 @@
 </main>
 
 <footer class="foot">
-  <span class="pokeball sm"></span> 종합게임 아레나 내전 허브 · 데이터는 서버 내부 기록 기준
+  {{ emblem('footA', 'sm') }} 종합게임 아레나 내전 허브 · 데이터는 서버 내부 기록 기준
 </footer>
 {% block scripts %}{% endblock %}
 </body>

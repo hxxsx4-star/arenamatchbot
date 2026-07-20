@@ -4,7 +4,7 @@
 {% block body %}
 
 <div class="section-title" style="font-size:20px">
-  <span class="pokeball"></span> 소환사 명단
+  {{ emblem('sumA') }} 소환사 명단
   <span class="muted" style="font-weight:600;font-size:14px">({{ summoners|length }}명)</span>
   {% if is_admin %}<button class="btn right" onclick="openAdd()">+ 소환사 추가</button>{% endif %}
 </div>

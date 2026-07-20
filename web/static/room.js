@@ -8,7 +8,7 @@ let reconnectTimer = null;
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws/${R.rid}${R.search}`);
+  ws = new WebSocket(`${proto}://${location.host}${R.prefix||""}/ws/${R.rid}${R.search}`);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === "state") { state = msg.state; render(); }

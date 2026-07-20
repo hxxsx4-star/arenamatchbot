@@ -78,6 +78,28 @@ def _require_admin(request: Request):
         raise HTTPException(status_code=403, detail="관리자 로그인이 필요합니다.")
 
 
+# ── 경매 서브앱 통합 (/auction) ──────────────────────────────
+# 기존 경매 웹앱(web/server.py)을 아레나 사이트의 /auction 하위에 마운트한다.
+# 도메인·포트·OAuth·관리자(ADMIN_IDS/SESSION_SECRET)를 그대로 공유한다.
+try:
+    from web.server import app as _auction_app, manager as _auction_manager
+    app.mount("/auction", _auction_app)
+    AUCTION_ON = True
+
+    @app.on_event("startup")
+    async def _boot_auction():
+        # 마운트된 서브앱은 자체 startup 이벤트가 실행되지 않으므로 여기서 복구를 호출한다.
+        try:
+            await _auction_manager.load_all()
+        except Exception as e:  # noqa: BLE001
+            print(f"[경매 복구 실패] {e}")
+except Exception as e:  # noqa: BLE001
+    print(f"[경매 통합 건너뜀] {e}")
+    AUCTION_ON = False
+
+templates.env.globals["auction_on"] = AUCTION_ON
+
+
 # ============ 페이지 ============
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):

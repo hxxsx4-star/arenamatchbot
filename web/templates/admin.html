@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>관리자 · 경매 로그</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ p }}/static/style.css">
 </head>
 <body>
   <div class="wrap">
@@ -26,14 +26,14 @@ PUBLIC_BASE_URL=https://arenamatch.p-e.kr
         <h2 style="justify-content:center">🚫 접근 권한 없음</h2>
         <p class="small">{{ who }} 님은 관리자가 아닙니다. 관리자 계정으로 로그인하세요.</p>
         <div class="actions" style="max-width:320px;margin:16px auto 0">
-          <a class="btn ghost" href="/auth/logout" style="text-decoration:none">다른 계정으로 로그인</a>
+          <a class="btn ghost" href="{{ p }}/auth/logout" style="text-decoration:none">다른 계정으로 로그인</a>
         </div>
       </div>
     {% elif admin %}
       <div class="card">
         <div class="row-between">
           <div class="small">로그인: <b style="color:var(--gold2)">{{ uname }}</b> (관리자)</div>
-          <a class="btn ghost small" href="/auth/logout" style="text-decoration:none">로그아웃</a>
+          <a class="btn ghost small" href="{{ p }}/auth/logout" style="text-decoration:none">로그아웃</a>
         </div>
       </div>
 
@@ -54,22 +54,23 @@ PUBLIC_BASE_URL=https://arenamatch.p-e.kr
         <h2 style="justify-content:center">관리자 로그인</h2>
         <p class="small">경매 로그는 관리자만 열람할 수 있습니다.</p>
         <div class="actions" style="max-width:340px;margin:16px auto 0">
-          <a class="btn primary" href="/auth/login" style="text-decoration:none">디스코드로 로그인</a>
+          <a class="btn primary" href="{{ p }}/auth/login" style="text-decoration:none">디스코드로 로그인</a>
         </div>
       </div>
     {% endif %}
 
-    <div class="center mt"><a href="/">← 홈으로</a></div>
+    <div class="center mt"><a href="{{ p }}/">← 홈으로</a></div>
   </div>
 
   {% if admin %}
   <script>
+    const P = "{{ p }}";
     const $ = (id) => document.getElementById(id);
     const fmt = (n) => (n || 0).toLocaleString();
     const phaseKo = { lobby: "대기", bidding: "진행중", sold: "진행중", finished: "종료" };
 
     async function loadList() {
-      const r = await fetch("/api/admin/auctions");
+      const r = await fetch(P+"/api/admin/auctions");
       if (!r.ok) { $("list").innerHTML = "<p class='small'>불러오기 실패</p>"; return; }
       const { auctions } = await r.json();
       if (!auctions.length) { $("list").innerHTML = "<p class='small'>진행 중이거나 완료된 경매가 없습니다.</p>"; return; }
@@ -86,7 +87,7 @@ PUBLIC_BASE_URL=https://arenamatch.p-e.kr
     }
 
     async function loadLog(rid, title) {
-      const r = await fetch(`/api/admin/auctions/${rid}/log`);
+      const r = await fetch(`${P}/api/admin/auctions/${rid}/log`);
       if (!r.ok) return alert("로그 조회 실패");
       const data = await r.json();
       $("logTitle").innerHTML = `<span class="num">📜</span> ${title} · 입찰 로그`;

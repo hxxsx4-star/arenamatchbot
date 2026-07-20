@@ -63,16 +63,21 @@ def _oauth_ready() -> bool:
 
 def _redirect_uri(request: Request) -> str:
     base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
-    return f"{base}/auth/callback"
+    return f"{base}{_p(request)}/auth/callback"
 
 
 def _is_admin(request: Request) -> bool:
     return str(request.session.get("uid", "")) in ADMIN_IDS
 
 
+def _p(request: Request) -> str:
+    """마운트 접두어(root_path). 단독 실행 시 '', /auction 밑에 마운트되면 '/auction'."""
+    return request.scope.get("root_path", "")
+
+
 def _abs(path: str, request: Request) -> str:
     base = PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
-    return f"{base}{path}"
+    return f"{base}{_p(request)}{path}"
 
 
 # 경매 방을 디스크에 저장할 디렉터리 (재시작해도 복구되도록 공유 볼륨에 저장)
@@ -169,12 +174,12 @@ async def _load_saved_auctions():
 # ============ 페이지 ============
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse(request, "index.html")
+    return templates.TemplateResponse(request, "index.html", {"p": _p(request)})
 
 
 @app.get("/create", response_class=HTMLResponse)
 async def create_page(request: Request):
-    return templates.TemplateResponse(request, "create.html")
+    return templates.TemplateResponse(request, "create.html", {"p": _p(request)})
 
 
 @app.post("/api/auctions")
@@ -230,12 +235,12 @@ async def create_auction(request: Request):
 async def room_page(request: Request, rid: str):
     room = manager.get(rid)
     if not room:
-        return templates.TemplateResponse(request, "gone.html", status_code=404)
+        return templates.TemplateResponse(request, "gone.html", {"p": _p(request)}, status_code=404)
     role, cid, cname = _resolve_role(room, request.query_params)
     if role is None:
-        return templates.TemplateResponse(request, "gone.html", status_code=403)
+        return templates.TemplateResponse(request, "gone.html", {"p": _p(request)}, status_code=403)
     return templates.TemplateResponse(request, "room.html", {
-        "rid": rid, "role": role,
+        "p": _p(request), "rid": rid, "role": role,
         "cid": cid or "", "cname": cname or "",
         "title": room.title,
     })
@@ -328,7 +333,7 @@ async def get_state(rid: str):
 async def auth_login(request: Request):
     if not _oauth_ready():
         return templates.TemplateResponse(request, "admin.html",
-                                          {"setup_needed": True, "admin": False})
+                                          {"p": _p(request), "setup_needed": True, "admin": False})
     state = secrets.token_urlsafe(16)
     request.session["oauth_state"] = state
     from urllib.parse import urlencode
@@ -371,7 +376,7 @@ async def auth_callback(request: Request):
     if uid not in ADMIN_IDS:
         request.session.clear()
         return templates.TemplateResponse(request, "admin.html",
-                                          {"denied": True, "admin": False,
+                                          {"p": _p(request), "denied": True, "admin": False,
                                            "who": user.get("username", "")}, status_code=403)
     request.session["uid"] = uid
     request.session["uname"] = user.get("global_name") or user.get("username", "")
@@ -388,11 +393,11 @@ async def auth_logout(request: Request):
 async def admin_page(request: Request):
     if not _oauth_ready():
         return templates.TemplateResponse(request, "admin.html",
-                                          {"setup_needed": True, "admin": False})
+                                          {"p": _p(request), "setup_needed": True, "admin": False})
     if not _is_admin(request):
         return RedirectResponse("/auth/login")
     return templates.TemplateResponse(request, "admin.html",
-                                      {"admin": True, "uname": request.session.get("uname", "")})
+                                      {"p": _p(request), "admin": True, "uname": request.session.get("uname", "")})
 
 
 @app.get("/api/admin/auctions")

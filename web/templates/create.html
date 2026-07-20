@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>경매 생성 · 아레나 경매</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ p }}/static/style.css">
 </head>
 <body>
   <div class="wrap">
@@ -117,10 +117,10 @@
     </div>
 
     <div class="actions">
-      <a class="btn ghost" href="/" style="text-decoration:none;text-align:center">취소</a>
+      <a class="btn ghost" href="{{ p }}/" style="text-decoration:none;text-align:center">취소</a>
       <button class="btn primary" id="createBtn">경매 생성하기</button>
     </div>
-    <div class="center mt"><a href="/">← 홈으로 돌아가기</a></div>
+    <div class="center mt"><a href="{{ p }}/">← 홈으로 돌아가기</a></div>
 
     <!-- 생성 결과(링크) -->
     <div class="card" id="result" style="display:none">
@@ -133,6 +133,7 @@
     </div>
   </div>
 
-  <script src="/static/create.js"></script>
+  <script>window.APREFIX="{{ p }}";</script>
+  <script src="{{ p }}/static/create.js"></script>
 </body>
 </html>

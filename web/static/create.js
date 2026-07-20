@@ -138,7 +138,7 @@ async function submitAuction() {
   $("createBtn").disabled = true;
   $("createBtn").textContent = "생성 중...";
   try {
-    const res = await fetch("/api/auctions", {
+    const res = await fetch((window.APREFIX||"")+"/api/auctions", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });

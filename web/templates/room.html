@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }} · 아레나 경매</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ p }}/static/style.css">
 </head>
 <body>
   <div class="wrap">
@@ -64,7 +64,7 @@
       <div class="upcoming" id="upcoming"></div>
     </div>
 
-    <div class="center mt"><a href="/">← 홈으로</a></div>
+    <div class="center mt"><a href="{{ p }}/">← 홈으로</a></div>
   </div>
 
   <script>
@@ -73,9 +73,10 @@
       role: "{{ role }}",
       cid: "{{ cid }}",
       cname: "{{ cname }}",
-      search: window.location.search
+      search: window.location.search,
+      prefix: "{{ p }}"
     };
   </script>
-  <script src="/static/room.js"></script>
+  <script src="{{ p }}/static/room.js"></script>
 </body>
 </html>

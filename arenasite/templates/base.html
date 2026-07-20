@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}{{ site_name }}{% endblock %} · 종합게임 아레나</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23ee1515' stroke='%23222' stroke-width='5'/><path d='M4 50h92' stroke='%23222' stroke-width='9'/><circle cx='50' cy='50' r='15' fill='white' stroke='%23222' stroke-width='6'/></svg>">
+</head>
+<body>
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/">
+      <span class="pokeball"></span>
+      <b>{{ site_name }}</b>
+    </a>
+    <nav class="menu">
+      <a href="/summoners" class="{% block m_sum %}{% endblock %}">소환사 관리</a>
+      <a href="/betting" class="{% block m_bet %}{% endblock %}">모집/참여</a>
+      <a href="/records" class="{% block m_rec %}{% endblock %}">기록실</a>
+      <a href="/ladder" class="{% block m_lad %}{% endblock %}">사다리타기</a>
+    </nav>
+    <div class="nav-right">
+      {% if discord_invite %}
+        <a class="btn btn-discord" href="{{ discord_invite }}" target="_blank" rel="noopener">Discord 연동</a>
+      {% endif %}
+      {% if is_admin %}
+        <span class="admin-badge">👑 {{ uname }}</span>
+        <a class="btn btn-ghost" href="/auth/logout">로그아웃</a>
+      {% else %}
+        <a class="btn btn-ghost" href="/auth/login">관리자</a>
+      {% endif %}
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  {% block body %}{% endblock %}
+</main>
+
+<footer class="foot">
+  <span class="pokeball sm"></span> 종합게임 아레나 내전 허브 · 데이터는 서버 내부 기록 기준
+</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>

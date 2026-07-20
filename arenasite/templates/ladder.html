@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}사다리타기{% endblock %}
+{% block m_lad %}active{% endblock %}
+{% block body %}
+
+<div class="section-title" style="font-size:20px">🪜 사다리타기</div>
+<p class="muted" style="margin-top:-6px">참가자와 결과를 입력하고 사다리를 그리면 무작위로 이어집니다.</p>
+
+<div class="grid g2">
+  <div class="card">
+    <label>참가자 (줄바꿈 또는 쉼표로 구분)</label>
+    <textarea id="names" rows="5" placeholder="원샷&#10;올킬&#10;홍길동"></textarea>
+    <label>결과 (참가자 수와 같게)</label>
+    <textarea id="results" rows="5" placeholder="당첨&#10;꽝&#10;커피 쏘기"></textarea>
+    <div class="spacer"></div>
+    <button class="btn" onclick="buildLadder()">사다리 생성</button>
+    <button class="btn btn-ghost" onclick="revealAll()">전체 공개</button>
+  </div>
+  <div class="card">
+    <div class="section-title">결과</div>
+    <div id="result-list" class="empty">사다리를 먼저 생성하세요.</div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px;overflow-x:auto">
+  <canvas id="ladder" width="720" height="420" style="max-width:100%"></canvas>
+</div>
+
+<script src="/static/ladder.js"></script>
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}전적 검색{% endblock %}
+{% block body %}
+
+<div class="hero" style="background:linear-gradient(120deg,#2f6bff,#57d0ff)">
+  <div class="ball-bg"></div>
+  <h1>🔍 전적 검색</h1>
+  <p>내전 전적과 챔피언별 성적을 확인하세요.</p>
+  <form class="hero-search" action="/search" method="get">
+    <input name="q" value="{{ q }}" placeholder="라이엇 ID (예: 원 샷#올 킬)" autocomplete="off">
+    <button class="btn" style="color:#2f6bff">검색</button>
+  </form>
+</div>
+
+{% if result %}
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div class="mvp-medal" style="background:linear-gradient(135deg,#2f6bff,#57d0ff)">🎮</div>
+      <div style="flex:1;min-width:200px">
+        <h2 style="font-size:22px">{{ result.riot_id }}</h2>
+        <div class="muted">
+          {% if live and live.tier %}
+            <span class="tier-badge">{{ live.tier_ko }} {{ live.rank }} · {{ live.lp }}LP</span>
+            <span style="margin-left:6px">솔랭 {{ live.wins }}승 {{ live.losses }}패</span>
+          {% elif riot_enabled %}<span class="tier-badge">언랭크/조회불가</span>
+          {% else %}<span class="muted" style="font-size:13px">라이엇 연동 미설정 — 내부 내전 기록만 표시</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="grid g3" style="text-align:center;gap:10px">
+      <div><div class="stat-big">{{ result.games }}</div><div class="muted">내전 판수</div></div>
+      <div><div class="stat-big" style="color:var(--win)">{{ result.winrate }}%</div>
+        <div class="muted">{{ result.wins }}승 {{ result.losses }}패</div></div>
+      <div><div class="stat-big" style="color:var(--red)">{{ result.kda }}</div>
+        <div class="muted">평균 KDA ({{ result.avg_k }}/{{ result.avg_d }}/{{ result.avg_a }})</div></div>
+    </div>
+    {% if result.mvp %}<div class="center" style="margin-top:12px">
+      <span class="pill pill-gold">👑 MVP {{ result.mvp }}회</span></div>{% endif %}
+  </div>
+
+  {% if result.games %}
+  <div class="grid g2">
+    <div class="card">
+      <div class="section-title">🏅 MOST 챔피언</div>
+      {% for c in result.champions %}
+        <div class="champ-row">
+          <b>{{ c.champion }}</b>
+          <span class="muted">{{ c.games }}판 · 승률 {{ c.winrate }}% · KDA {{ c.kda }}</span>
+        </div>
+      {% else %}<div class="empty">챔피언 기록 없음</div>{% endfor %}
+    </div>
+    <div class="card">
+      <div class="section-title">🕒 최근 내전</div>
+      {% for r in result.recent %}
+        <div class="list-row">
+          <span class="pill {{ 'pill-win' if r.win else 'pill-lose' }}">{{ '승' if r.win else '패' }}</span>
+          <div style="flex:1">
+            <b>{{ r.champion or '미상' }}</b>{% if r.mvp %} <span class="pill pill-gold">MVP</span>{% endif %}
+            <div class="muted" style="font-size:13px">{{ r.date }} · {{ MODES[r.mode] }}</div>
+          </div>
+          <span class="kda muted">{{ r.kills }}/{{ r.deaths }}/{{ r.assists }}</span>
+        </div>
+      {% else %}<div class="empty">최근 경기 없음</div>{% endfor %}
+    </div>
+  </div>
+  {% else %}
+    <div class="card empty">이 소환사의 내전 기록이 아직 없어요. 기록실에서 경기를 추가해보세요.</div>
+  {% endif %}
+{% elif q %}
+  <div class="card empty">검색 결과가 없습니다.</div>
+{% endif %}
+{% endblock %}

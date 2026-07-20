@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}소환사 관리{% endblock %}
+{% block m_sum %}active{% endblock %}
+{% block body %}
+
+<div class="section-title" style="font-size:20px">
+  <span class="pokeball"></span> 소환사 명단
+  <span class="muted" style="font-weight:600;font-size:14px">({{ summoners|length }}명)</span>
+  {% if is_admin %}<button class="btn right" onclick="openAdd()">+ 소환사 추가</button>{% endif %}
+</div>
+
+<div class="card">
+  {% if summoners %}
+  <table>
+    <thead><tr><th>라이엇 ID</th><th>티어</th><th>주포지션</th><th></th></tr></thead>
+    <tbody>
+      {% for s in summoners %}
+      <tr>
+        <td><a href="/search?q={{ s.riot_id|urlencode }}"><b>{{ s.riot_id }}</b></a></td>
+        <td>{% if s.tier %}<span class="tier-badge">{{ s.tier }}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
+        <td>{{ s.position or '-' }}</td>
+        <td class="right">
+          <a class="btn btn-ghost btn-sm" href="/search?q={{ s.riot_id|urlencode }}">전적</a>
+          {% if is_admin %}<span class="remove" style="margin-left:8px" onclick="delSum('{{ s.id }}')">삭제</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">아직 등록된 소환사가 없어요.{% if is_admin %} 우측 상단에서 추가하세요.{% endif %}</div>
+  {% endif %}
+</div>
+
+{% if is_admin %}
+<div class="modal-back" id="addModal">
+  <div class="modal">
+    <span class="close-x" onclick="closeAdd()">×</span>
+    <h3>소환사 추가</h3>
+    <p class="muted" style="font-size:13px">{% if riot_enabled %}티어를 비워두면 라이엇에서 자동 조회합니다.{% else %}라이엇 연동이 없어 티어는 직접 입력합니다.{% endif %}</p>
+    <label>라이엇 ID (이름#태그)</label><input id="ad_id" placeholder="원 샷#올 킬">
+    <div class="row">
+      <div><label>티어 (선택)</label><input id="ad_tier" placeholder="다이아몬드 IV"></div>
+      <div><label>주포지션 (선택)</label>
+        <select id="ad_pos"><option value="">-</option>
+          <option>탑</option><option>정글</option><option>미드</option><option>원딜</option><option>서포터</option></select></div>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn" onclick="saveSum()">추가</button>
+  </div>
+</div>
+<script>
+function openAdd(){document.getElementById('addModal').classList.add('show');}
+function closeAdd(){document.getElementById('addModal').classList.remove('show');}
+async function saveSum(){
+  const b={riot_id:val('ad_id'),tier:val('ad_tier'),position:val('ad_pos')};
+  if(!b.riot_id.includes('#')){alert("'이름#태그' 형식으로 입력하세요");return;}
+  const r=await fetch('/api/summoners',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  if(r.ok)location.reload();else alert('추가 실패: '+(await r.json()).detail);
+}
+async function delSum(id){if(!confirm('삭제할까요?'))return;
+  await fetch('/api/summoners/'+id,{method:'DELETE'});location.reload();}
+function val(id){return document.getElementById(id).value.trim();}
+</script>
+{% endif %}
+{% endblock %}

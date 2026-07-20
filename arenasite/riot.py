@@ -1,0 +1,61 @@
+"""라이엇 API 연동 (선택). RIOT_API_KEY 환경변수가 있으면 실 티어를 조회하고,
+없으면 조용히 None 을 반환해 사이트는 내부 기록만으로 동작한다.
+
+키 발급: https://developer.riotgames.com/  (RIOT_API_KEY 로 지정)
+지역 라우팅은 asia(계정) + kr(리그) 고정. (필요 시 확장)
+"""
+from __future__ import annotations
+
+import os
+import httpx
+
+RIOT_API_KEY = os.environ.get("RIOT_API_KEY", "").strip()
+ACCOUNT_HOST = "https://asia.api.riotgames.com"
+PLATFORM_HOST = "https://kr.api.riotgames.com"
+
+TIER_KO = {
+    "IRON": "아이언", "BRONZE": "브론즈", "SILVER": "실버", "GOLD": "골드",
+    "PLATINUM": "플래티넘", "EMERALD": "에메랄드", "DIAMOND": "다이아몬드",
+    "MASTER": "마스터", "GRANDMASTER": "그랜드마스터", "CHALLENGER": "챌린저",
+}
+
+
+def enabled() -> bool:
+    return bool(RIOT_API_KEY)
+
+
+async def lookup(riot_id: str) -> dict | None:
+    """riot_id = '이름#태그' → {tier, rank, lp, wins, losses} 또는 None."""
+    if not RIOT_API_KEY or "#" not in riot_id:
+        return None
+    name, tag = riot_id.split("#", 1)
+    headers = {"X-Riot-Token": RIOT_API_KEY}
+    try:
+        async with httpx.AsyncClient(timeout=8, headers=headers) as cli:
+            r = await cli.get(
+                f"{ACCOUNT_HOST}/riot/account/v1/accounts/by-riot-id/"
+                f"{name.strip()}/{tag.strip()}")
+            if r.status_code != 200:
+                return None
+            puuid = r.json().get("puuid")
+            if not puuid:
+                return None
+            lr = await cli.get(
+                f"{PLATFORM_HOST}/lol/league/v4/entries/by-puuid/{puuid}")
+            if lr.status_code != 200:
+                return {"tier": "", "rank": "", "puuid": puuid}
+            for entry in lr.json():
+                if entry.get("queueType") == "RANKED_SOLO_5x5":
+                    tier = entry.get("tier", "")
+                    return {
+                        "puuid": puuid,
+                        "tier": tier,
+                        "tier_ko": TIER_KO.get(tier, tier),
+                        "rank": entry.get("rank", ""),
+                        "lp": entry.get("leaguePoints", 0),
+                        "wins": entry.get("wins", 0),
+                        "losses": entry.get("losses", 0),
+                    }
+            return {"tier": "UNRANKED", "tier_ko": "언랭크", "rank": "", "puuid": puuid}
+    except Exception:
+        return None

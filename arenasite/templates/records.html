@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}기록실{% endblock %}
+{% block m_rec %}active{% endblock %}
+{% block body %}
+
+<div class="section-title" style="font-size:20px">
+  📖 내전 결과 기록
+  {% if is_admin %}<button class="btn right" onclick="openMatch()">+ 경기 추가</button>{% endif %}
+</div>
+
+<div class="tabs">
+  {% for k,v in MODES.items() %}
+    <a href="/records?mode={{ k }}" class="{{ 'active' if mode==k }}">{{ v }}</a>
+  {% endfor %}
+</div>
+
+{% if matches %}
+  {% for m in matches %}
+  <div class="card" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span class="pill pill-mode">{{ MODES[m.mode] }}</span>
+      <b style="font-size:16px">{{ m.title }}</b>
+      <span class="muted">{{ m.date }}</span>
+      {% if m.mvp %}<span class="pill pill-gold">👑 MVP {{ m.mvp }}</span>{% endif %}
+      {% if is_admin %}<span class="remove right" onclick="delMatch('{{ m.id }}')">삭제</span>{% endif %}
+    </div>
+    <div class="spacer"></div>
+    <div class="grid g2">
+      {% for t in m.teams %}
+      <div style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+                  {% if t.win %}background:#f3f7ff;border-color:#c9dcff{% endif %}">
+        <div style="font-weight:800;margin-bottom:6px">
+          {% if t.win %}🏆 {% endif %}{{ t.name }}
+          <span class="pill {{ 'pill-win' if t.win else 'pill-lose' }}">{{ '승' if t.win else '패' }}</span>
+        </div>
+        {% for p in t.players %}
+        <div class="player-line">
+          <span><b>{{ p.summoner }}</b>{% if p.champion %} <span class="muted">· {{ p.champion }}</span>{% endif %}</span>
+          <span class="muted">{{ p.position }}</span>
+          <span class="kda">{{ p.kills }}/{{ p.deaths }}/{{ p.assists }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="card empty">이 분류에 기록된 경기가 없어요.{% if is_admin %} 우측 상단 <b>경기 추가</b>로 등록하세요.{% endif %}</div>
+{% endif %}
+
+{% if is_admin %}
+<div class="modal-back" id="matchModal">
+  <div class="modal">
+    <span class="close-x" onclick="closeMatch()">×</span>
+    <h3>경기 추가</h3>
+    <div class="row">
+      <div><label>날짜</label><input type="date" id="mt_date"></div>
+      <div><label>모드</label><select id="mt_mode">
+        {% for k,v in MODES.items() %}<option value="{{ k }}" {{ 'selected' if mode==k }}>{{ v }}</option>{% endfor %}
+      </select></div>
+    </div>
+    <label>경기 제목</label><input id="mt_title" placeholder="단판 매치">
+    <label>MVP (라이엇 ID, 선택)</label><input id="mt_mvp" placeholder="원 샷#올 킬">
+
+    <div id="teams"></div>
+    <div class="spacer"></div>
+    <button class="btn btn-ghost btn-sm" onclick="addTeam()">+ 팀 추가</button>
+    <div class="spacer"></div><div class="spacer"></div>
+    <button class="btn" onclick="saveMatch()">경기 저장</button>
+  </div>
+</div>
+<script src="/static/records.js"></script>
+<script>const DEFAULT_MODE="{{ mode }}";initTeams();</script>
+{% endif %}
+{% endblock %}

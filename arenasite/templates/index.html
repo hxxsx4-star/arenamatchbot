@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}대시보드{% endblock %}
+{% block body %}
+{% set d = dash %}
+
+<div class="hero">
+  <div class="ball-bg"></div>
+  <h1><span class="pokeball"></span> 종합게임 아레나 내전 허브</h1>
+  <p>이번 주 내전 {{ d.week_games }}판 · 누적 경기 {{ d.total_matches }} · 등록 소환사 {{ d.total_summoners }}명</p>
+  <form class="hero-search" action="/search" method="get">
+    <input name="q" placeholder="라이엇 ID 검색 (예: 원 샷#올 킬)" autocomplete="off">
+    <button class="btn">전적 검색</button>
+  </form>
+</div>
+
+<div class="section-title"><span class="dot"></span> 이번 주 TOP 3 통계
+  <span class="muted" style="font-weight:600;font-size:13px">({{ d.week_start }} ~ · 최소 2판)</span>
+</div>
+<div class="grid g3" style="margin-bottom:22px">
+  <div class="card rank-card">
+    <div class="section-title">🗡️ 최다 킬</div>
+    {% for r in d.top_kills %}
+      <div class="rk top{{ loop.index }}"><span class="no">{{ loop.index }}</span>
+        <span class="nm">{{ r.summoner }}</span><span class="val">{{ r.k }} 킬</span></div>
+    {% else %}<div class="empty">기록 없음</div>{% endfor %}
+  </div>
+  <div class="card rank-card">
+    <div class="section-title">🏆 최고 승률</div>
+    {% for r in d.top_winrate %}
+      <div class="rk top{{ loop.index }}"><span class="no">{{ loop.index }}</span>
+        <span class="nm">{{ r.summoner }}</span>
+        <span class="val">{{ r.winrate }}% <span class="muted" style="font-weight:600">({{ r.wins }}/{{ r.games }})</span></span></div>
+    {% else %}<div class="empty">기록 없음</div>{% endfor %}
+  </div>
+  <div class="card rank-card">
+    <div class="section-title">⚔️ 최고 KDA</div>
+    {% for r in d.top_kda %}
+      <div class="rk top{{ loop.index }}"><span class="no">{{ loop.index }}</span>
+        <span class="nm">{{ r.summoner }}</span><span class="val kda">{{ r.kda }}</span></div>
+    {% else %}<div class="empty">기록 없음</div>{% endfor %}
+  </div>
+</div>
+
+<div class="grid g2" style="margin-bottom:22px">
+  <div class="card">
+    <div class="section-title">👑 이번 주 MVP</div>
+    {% if d.week_mvp %}
+      <div class="mvp-box">
+        <div class="mvp-medal">🏅</div>
+        <div>
+          <div class="mvp-name">{{ d.week_mvp.summoner }}</div>
+          <div class="muted">승률 {{ d.week_mvp.winrate }}% · KDA {{ d.week_mvp.kda }} ·
+            {{ d.week_mvp.games }}판{% if d.week_mvp.mvp %} · MVP {{ d.week_mvp.mvp }}회{% endif %}</div>
+        </div>
+      </div>
+    {% else %}<div class="empty">이번 주 MVP 없음 (최소 2판 필요)</div>{% endif %}
+  </div>
+  <div class="card rank-card">
+    <div class="section-title">🌟 우수 참여자 TOP 5</div>
+    {% for r in d.top_players %}
+      <div class="rk"><span class="no">{{ loop.index }}</span>
+        <span class="nm">{{ r.summoner }}</span>
+        <span class="val">{{ r.games }}판 <span class="muted" style="font-weight:600">{{ r.wins }}승</span></span></div>
+    {% else %}<div class="empty">참여 기록 없음</div>{% endfor %}
+  </div>
+</div>
+
+<div class="grid g2">
+  <div class="card">
+    <div class="section-title">📅 다가오는 내전 일정
+      {% if is_admin %}<a class="btn btn-sm right" onclick="openSched()">+ 일정 추가</a>{% endif %}</div>
+    {% for s in d.schedules %}
+      <div class="list-row">
+        <span class="pill pill-mode">{{ MODES[s.mode] }}</span>
+        <div style="flex:1">
+          <b>{{ s.title }}</b>
+          <div class="muted" style="font-size:13px">{{ s.date }} {{ s.time }}{% if s.note %} · {{ s.note }}{% endif %}</div>
+        </div>
+        {% if is_admin %}<span class="remove" onclick="delSched('{{ s.id }}')">삭제</span>{% endif %}
+      </div>
+    {% else %}<div class="empty">예정된 내전이 없어요.</div>{% endfor %}
+  </div>
+  <div class="card">
+    <div class="section-title">🕒 최근 내전 결과
+      <a class="right muted" style="font-size:13px;font-weight:600" href="/records">전체 보기 →</a></div>
+    {% for m in d.recent_matches %}
+      {% set won = m.teams|selectattr('win')|list|first %}
+      <div class="list-row">
+        <span class="pill pill-mode">{{ MODES[m.mode] }}</span>
+        <div style="flex:1">
+          <b>{{ m.title }}</b>
+          <div class="muted" style="font-size:13px">{{ m.date }}
+            {% if won %}· 🏆 {{ won.name }} 우승{% endif %}
+            {% if m.mvp %}· MVP {{ m.mvp }}{% endif %}</div>
+        </div>
+      </div>
+    {% else %}<div class="empty">아직 기록된 경기가 없어요.</div>{% endfor %}
+  </div>
+</div>
+
+{% if is_admin %}
+<div class="modal-back" id="schedModal">
+  <div class="modal">
+    <span class="close-x" onclick="closeSched()">×</span>
+    <h3>내전 일정 추가</h3>
+    <div class="row"><div><label>날짜</label><input type="date" id="sc_date"></div>
+      <div><label>시간</label><input id="sc_time" placeholder="21:00"></div></div>
+    <label>제목</label><input id="sc_title" placeholder="정규 내전">
+    <label>모드</label>
+    <select id="sc_mode">{% for k,v in MODES.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select>
+    <label>메모</label><input id="sc_note" placeholder="선택">
+    <div class="spacer"></div>
+    <button class="btn" onclick="saveSched()">추가</button>
+  </div>
+</div>
+<script>
+function openSched(){document.getElementById('schedModal').classList.add('show');}
+function closeSched(){document.getElementById('schedModal').classList.remove('show');}
+async function saveSched(){
+  const b={date:v('sc_date'),time:v('sc_time'),title:v('sc_title'),mode:v('sc_mode'),note:v('sc_note')};
+  if(!b.date){alert('날짜를 입력하세요');return;}
+  const r=await fetch('/api/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  if(r.ok)location.reload();else alert('추가 실패: '+(await r.json()).detail);
+}
+async function delSched(id){if(!confirm('삭제할까요?'))return;
+  await fetch('/api/schedules/'+id,{method:'DELETE'});location.reload();}
+function v(id){return document.getElementById(id).value;}
+</script>
+{% endif %}
+{% endblock %}

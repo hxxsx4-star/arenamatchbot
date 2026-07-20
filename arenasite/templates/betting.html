@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}모집/참여{% endblock %}
+{% block m_bet %}active{% endblock %}
+{% block body %}
+
+<div class="section-title" style="font-size:20px">
+  🎯 내기 모집/참여
+  <button class="btn right" onclick="openBet()">+ 내기 생성</button>
+</div>
+
+<div class="tabs">
+  <a href="/betting?cat=lol" class="{{ 'active' if cat=='lol' }}">LOL 솔랭</a>
+  <a href="/betting?cat=tft" class="{{ 'active' if cat=='tft' }}">TFT 롤체</a>
+  <a href="/ladder" style="margin-left:auto">🪜 사다리타기 →</a>
+</div>
+
+{% if bets %}
+  {% for b in bets %}
+  <div class="card" style="margin-bottom:12px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <b style="font-size:16px">{{ b.title }}</b>
+      {% if b.target_score %}<span class="pill pill-mode">목표 {{ b.target_score }}</span>{% endif %}
+      {% if b.host %}<span class="muted">개설: {{ b.host }}</span>{% endif %}
+      <span class="right muted">참가 {{ b.participants|length }}명</span>
+    </div>
+    <div class="spacer"></div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      {% for p in b.participants %}<span class="tier-badge">{{ p }}</span>{% else %}
+        <span class="muted">아직 참가자가 없어요.</span>{% endfor %}
+    </div>
+    <div class="spacer"></div>
+    <button class="btn btn-blue btn-sm" onclick="joinBet('{{ b.id }}')">참가하기</button>
+    {% if is_admin %}<span class="remove" style="margin-left:10px" onclick="delBet('{{ b.id }}')">삭제</span>{% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="card empty">진행 중인 내기가 없어요. <b>내기 생성</b>으로 시작하세요.</div>
+{% endif %}
+
+<div class="modal-back" id="betModal">
+  <div class="modal">
+    <span class="close-x" onclick="closeBet()">×</span>
+    <h3>내기 생성</h3>
+    <label>종류</label>
+    <select id="bt_cat"><option value="lol" {{ 'selected' if cat=='lol' }}>LOL 솔랭</option>
+      <option value="tft" {{ 'selected' if cat=='tft' }}>TFT 롤체</option></select>
+    <label>제목</label><input id="bt_title" placeholder="오늘 목표 점수 내기">
+    <div class="row">
+      <div><label>목표 점수 (선택)</label><input id="bt_target" placeholder="다이아 승급"></div>
+      <div><label>개설자 (선택)</label><input id="bt_host" placeholder="닉네임"></div>
+    </div>
+    <label>참가자 (쉼표로 구분, 선택)</label><input id="bt_parts" placeholder="원샷, 올킬, ...">
+    <div class="spacer"></div>
+    <button class="btn" onclick="saveBet()">생성</button>
+  </div>
+</div>
+<script>
+function openBet(){document.getElementById('betModal').classList.add('show');}
+function closeBet(){document.getElementById('betModal').classList.remove('show');}
+function v(id){return document.getElementById(id).value.trim();}
+async function saveBet(){
+  const parts=v('bt_parts').split(',').map(s=>s.trim()).filter(Boolean);
+  const b={category:v('bt_cat'),title:v('bt_title'),target_score:v('bt_target'),host:v('bt_host'),participants:parts};
+  if(!b.title){alert('제목을 입력하세요');return;}
+  const r=await fetch('/api/bets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  if(r.ok)location.reload();else alert('생성 실패: '+(await r.json()).detail);
+}
+async function joinBet(id){
+  const name=prompt('참가할 닉네임을 입력하세요');if(!name)return;
+  const r=await fetch('/api/bets/'+id+'/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  if(r.ok)location.reload();else alert('참가 실패');
+}
+async function delBet(id){if(!confirm('삭제할까요?'))return;
+  await fetch('/api/bets/'+id,{method:'DELETE'});location.reload();}
+</script>
+{% endblock %}

@@ -22,6 +22,9 @@ from utils.stats import add_points, get_nickname, get_lanes, format_num
 from utils.tiers import get_tier
 from utils.logs import MATCH_LOG_CH, enqueue_embed
 
+# 내전 결과 발표 채널 (결과 이미지 + 요약을 공개 게시)
+RESULT_ANNOUNCE_CH = 1528716794469027930
+
 FORUM_ID = 1527367803676655697
 MANAGER_ROLE = 1526678410124988526
 WIN_POINTS, LOSE_POINTS = 140, 60
@@ -482,6 +485,28 @@ class MatchCog(commands.Cog):
             enqueue_embed(MATCH_LOG_CH, e.to_dict(), guild=s.guild)
         except Exception:
             pass
+        # 내전 결과 발표 채널 — 결과 이미지와 함께 공개 게시
+        try:
+            ch = self.bot.get_channel(RESULT_ANNOUNCE_CH)
+            if ch:
+                blue = await self._team_rows(s, s.team1)
+                red = await self._team_rows(s, s.team2)
+                img2 = await asyncio.to_thread(
+                    render_team_image,
+                    f"내전 결과 · {GAME_LABELS.get(s.game, s.game)}",
+                    blue, red, mvp_name, winner)
+                res = discord.Embed(
+                    title=f"🏆 내전 결과 · {GAME_LABELS.get(s.game, s.game)}",
+                    description=(f"**{winner}팀 승리!**"
+                                 f"{f' · 🏅 MVP: **{mvp_name}**' if mvp_name else ''}\n"
+                                 f"승리팀 +{WIN_POINTS}P / 패배팀 +{LOSE_POINTS}P"),
+                    color=discord.Color.blue() if winner == 1 else discord.Color.red(),
+                    timestamp=discord.utils.utcnow())
+                res.set_image(url="attachment://result.png")
+                await ch.send(embed=res,
+                              file=discord.File(io.BytesIO(img2), filename="result.png"))
+        except Exception as e2:
+            print(f"[내전 결과 발표] 전송 실패: {e2}")
 
     # ----- 명령어 -----
     @match_group.command(name="진행", description="포럼 참여자들로 내전을 진행합니다.")

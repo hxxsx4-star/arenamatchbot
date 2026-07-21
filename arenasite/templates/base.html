@@ -39,14 +39,14 @@
       {% if auction_on %}<a href="/auction/">경매</a>{% endif %}
     </nav>
     <div class="nav-right">
-      {% if discord_invite %}
-        <a class="btn btn-discord" href="{{ discord_invite }}" target="_blank" rel="noopener">Discord 연동</a>
-      {% endif %}
-      {% if is_admin %}
-        <span class="admin-badge">👑 {{ uname }}</span>
-        <a class="btn btn-ghost" href="/auth/logout">로그아웃</a>
+      {% if uid %}
+        <a class="user-chip" href="/me" title="내 프로필">
+          {% if avatar %}<img src="{{ avatar }}" alt="">{% endif %}
+          <span>{{ uname }}</span>
+          {% if is_admin %}<span class="crown">👑</span>{% endif %}
+        </a>
       {% else %}
-        <a class="btn btn-ghost" href="/auth/login">관리자</a>
+        <a class="btn btn-discord" href="/auth/login">Discord 연동</a>
       {% endif %}
     </div>
   </div>

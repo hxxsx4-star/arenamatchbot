@@ -56,6 +56,12 @@ h1,h2,h3{margin:0}
 .menu a.active{background:rgba(238,21,21,.22);color:#ff8a6a}
 .nav-right{margin-left:auto;display:flex;align-items:center;gap:8px}
 .admin-badge{font-size:13px;color:#c7ccda;font-weight:600}
+.user-chip{display:flex;align-items:center;gap:8px;padding:5px 12px 5px 6px;border-radius:999px;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);
+  color:#fff;font-weight:700;font-size:14px}
+.user-chip:hover{background:rgba(255,255,255,.14)}
+.user-chip img{width:26px;height:26px;border-radius:50%;border:2px solid var(--red)}
+.user-chip .crown{font-size:12px}
 
 /* ---------- buttons ---------- */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;

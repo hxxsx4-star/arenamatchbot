@@ -242,3 +242,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); }
 .nav-discord{background:#5865F2;color:#fff;padding:8px 14px;border-radius:10px;
   font-weight:700;font-size:14px;text-decoration:none;white-space:nowrap}
 .nav-discord:hover{background:#4451d6}
+.user-chip{display:flex;align-items:center;gap:8px;padding:5px 12px 5px 6px;border-radius:999px;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);
+  color:#fff;font-weight:700;font-size:14px;text-decoration:none}
+.user-chip:hover{background:rgba(255,255,255,.14)}
+.user-chip img{width:26px;height:26px;border-radius:50%;border:2px solid #ee1515}
+.user-chip .crown{font-size:12px}

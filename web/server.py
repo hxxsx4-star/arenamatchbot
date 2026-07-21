@@ -389,15 +389,19 @@ async def auth_callback(request: Request):
     user = me.json()
     uid = str(user.get("id"))
     guilds = guilds_resp.json() if guilds_resp.status_code == 200 else []
-    if not (_has_manage_perm(guilds) or uid in ADMIN_IDS):
-        request.session.clear()
-        return templates.TemplateResponse(request, "admin.html",
-                                          {"p": _p(request), "session_admin": _is_admin(request), "denied": True, "admin": False,
-                                           "who": user.get("username", "")}, status_code=403)
+    # 누구나 로그인 가능. 서버 관리 권한자(또는 고정 ID)만 관리자 플래그.
     request.session["uid"] = uid
     request.session["uname"] = user.get("global_name") or user.get("username", "")
-    request.session["admin"] = True
-    return RedirectResponse(f"{_p(request)}/admin")
+    request.session["admin"] = _has_manage_perm(guilds) or uid in ADMIN_IDS
+    request.session["member"] = any(str(g.get("id")) == str(GUILD_ID) for g in guilds)
+    avatar_hash = user.get("avatar")
+    if avatar_hash:
+        request.session["avatar"] = f"https://cdn.discordapp.com/avatars/{uid}/{avatar_hash}.png?size=128"
+    else:
+        request.session["avatar"] = f"https://cdn.discordapp.com/embed/avatars/{(int(uid) >> 22) % 6}.png"
+    if request.session["admin"]:
+        return RedirectResponse(f"{_p(request)}/admin")
+    return RedirectResponse(f"{_p(request)}/")
 
 
 @app.get("/auth/logout")

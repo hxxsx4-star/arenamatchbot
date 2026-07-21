@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}내 프로필{% endblock %}
+{% block body %}
+
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <img src="{{ avatar }}" alt="" style="width:76px;height:76px;border-radius:50%;
+         border:3px solid var(--red);box-shadow:0 4px 14px rgba(238,21,21,.35)">
+    <div style="flex:1;min-width:220px">
+      <h2 style="font-size:23px">{{ uname }}</h2>
+      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+        {% if is_admin %}<span class="pill pill-gold">👑 관리자</span>{% endif %}
+        {% if is_member %}<span class="pill pill-win">종합게임 아레나 멤버</span>
+        {% else %}<span class="pill pill-mode">서버 미가입</span>{% endif %}
+        {% if profile.warns %}<span class="pill pill-lose">⚠️ 경고 {{ profile.warns }}회</span>{% endif %}
+      </div>
+    </div>
+    <a class="btn btn-ghost btn-sm" href="/auth/logout">로그아웃</a>
+  </div>
+
+  {% if profile.registered %}
+  <div class="spacer"></div>
+  <div class="grid g3" style="text-align:center;gap:10px">
+    <div><div class="stat-big" style="color:var(--red)">{{ "{:,}".format(profile.points) }}P</div>
+      <div class="muted">보유 포인트</div></div>
+    <div><div class="stat-big">Lv.{{ profile.chat_level }}</div><div class="muted">💬 채팅 레벨</div></div>
+    <div><div class="stat-big">Lv.{{ profile.voice_level }}</div><div class="muted">🔊 음성 레벨</div></div>
+  </div>
+  {% else %}
+  <div class="empty">아직 서버 활동 기록이 없어요. 디스코드에서 활동하면 포인트·레벨이 여기 표시됩니다.</div>
+  {% endif %}
+</div>
+
+<div class="grid g2" style="margin-bottom:16px">
+  <div class="card">
+    <div class="section-title">🎮 등록된 게임 닉네임</div>
+    <div class="list-row"><span class="pill pill-mode">롤</span>
+      <b style="flex:1">{{ profile.lol_nick or '미등록' }}</b>
+      {% if live and live.tier %}<span class="tier-badge">{{ live.tier_ko }} {{ live.rank }}</span>{% endif %}
+    </div>
+    <div class="list-row"><span class="pill pill-mode">발로</span>
+      <b style="flex:1">{{ profile.val_nick or '미등록' }}</b></div>
+    {% if not profile.lol_nick and not profile.val_nick %}
+      <p class="muted" style="font-size:13px">디스코드에서 <b>/닉네임등록</b>(관리자/티어조정관)으로 등록할 수 있어요.</p>
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="section-title">🗺️ 라인</div>
+    <div class="list-row"><span class="pill pill-mode">주라인</span>
+      <b style="flex:1">{{ profile.main_lane or '미등록' }}</b></div>
+    <div class="list-row"><span class="pill pill-mode">부라인</span>
+      <b style="flex:1">{{ profile.sub_lane or '미등록' }}</b></div>
+    {% if not profile.main_lane %}
+      <p class="muted" style="font-size:13px">디스코드에서 <b>/롤 라인등록</b>으로 등록할 수 있어요.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if match_stats and match_stats.games %}
+<div class="card">
+  <div class="section-title">⚔️ 내전 전적 — {{ match_stats.riot_id }}
+    <a class="right muted" style="font-size:13px;font-weight:600"
+       href="/search?q={{ match_stats.riot_id|urlencode }}">상세 보기 →</a></div>
+  <div class="grid g3" style="text-align:center;gap:10px">
+    <div><div class="stat-big">{{ match_stats.games }}</div><div class="muted">판수</div></div>
+    <div><div class="stat-big" style="color:var(--win)">{{ match_stats.winrate }}%</div>
+      <div class="muted">{{ match_stats.wins }}승 {{ match_stats.losses }}패</div></div>
+    <div><div class="stat-big" style="color:var(--red)">{{ match_stats.kda }}</div><div class="muted">평균 KDA</div></div>
+  </div>
+  {% if match_stats.mvp %}<div class="center" style="margin-top:10px">
+    <span class="pill pill-gold">👑 MVP {{ match_stats.mvp }}회</span></div>{% endif %}
+</div>
+{% elif profile.lol_nick %}
+<div class="card empty">아직 <b>{{ profile.lol_nick }}</b> 님의 내전 기록이 없어요.</div>
+{% endif %}
+
+{% endblock %}

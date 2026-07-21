@@ -370,6 +370,53 @@ def summoner_stats(riot_id: str) -> dict:
     }
 
 
+# ============================================================
+# 유저 프로필 (봇이 쓰는 공유 stats.json 연동)
+# ============================================================
+def read_stats() -> dict:
+    """모든 봇이 공유하는 stats.json 을 읽는다(읽기 전용)."""
+    p = os.path.join(SHARED_DIR, "stats.json")
+    if not os.path.exists(p):
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _xp_for_level(level: int) -> float:
+    # 레벨 곡선: 기본 600, 레벨당 ×1.05 (봇과 동일)
+    return 600 * (1.05 ** level - 1) / 0.05
+
+
+def level_from_xp(xp) -> int:
+    try:
+        xp = max(0, int(xp or 0))
+    except (TypeError, ValueError):
+        return 0
+    level = 0
+    while level < 1000 and _xp_for_level(level + 1) <= xp:
+        level += 1
+    return level
+
+
+def user_profile(uid) -> dict:
+    """디스코드 유저 ID 로 봇 데이터(포인트/레벨/닉네임/라인)를 조회."""
+    rec = read_stats().get(str(uid), {}) or {}
+    return {
+        "points": int(rec.get("포인트", 0) or 0),
+        "warns": int(rec.get("경고", 0) or 0),
+        "chat_level": level_from_xp(rec.get("경험치", 0)),
+        "voice_level": level_from_xp(rec.get("음성경험치", 0)),
+        "lol_nick": rec.get("롤닉") or "",
+        "val_nick": rec.get("발닉") or "",
+        "main_lane": rec.get("주라인") or "",
+        "sub_lane": rec.get("부라인") or "",
+        "registered": bool(rec),
+    }
+
+
 def _week_start() -> str:
     now = datetime.now(KST)
     monday = now - timedelta(days=now.weekday())

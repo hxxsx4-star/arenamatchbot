@@ -82,7 +82,9 @@ def _ctx(request: Request, **kw) -> dict:
     d = {
         "request": request,
         "is_admin": _is_admin(request),
+        "uid": request.session.get("uid", ""),
         "uname": request.session.get("uname", ""),
+        "avatar": request.session.get("avatar", ""),
         "discord_invite": DISCORD_INVITE,
         "riot_enabled": riot.enabled(),
     }
@@ -165,6 +167,24 @@ async def betting_page(request: Request):
 @app.get("/ladder", response_class=HTMLResponse)
 async def ladder_page(request: Request):
     return templates.TemplateResponse(request, "ladder.html", _ctx(request))
+
+
+@app.get("/me", response_class=HTMLResponse)
+async def my_profile(request: Request):
+    uid = request.session.get("uid")
+    if not uid:
+        # 미로그인 → 디스코드 로그인으로 (로그인 후 다시 /me)
+        return RedirectResponse("/auth/login?next=/me")
+    profile = store.user_profile(uid)
+    # 등록된 롤 닉네임이 있으면 내전 전적도 함께
+    match_stats = store.summoner_stats(profile["lol_nick"]) if profile["lol_nick"] else None
+    live = None
+    if profile["lol_nick"] and riot.enabled():
+        live = await riot.lookup(profile["lol_nick"])
+    return templates.TemplateResponse(request, "me.html",
+                                      _ctx(request, profile=profile,
+                                           match_stats=match_stats, live=live,
+                                           is_member=bool(request.session.get("member"))))
 
 
 # ============ API: 소환사 ============
@@ -263,6 +283,8 @@ async def auth_login(request: Request):
             "환경변수를 설정하세요.</p><a href='/'>← 홈</a>", status_code=503)
     state = secrets.token_urlsafe(16)
     request.session["oauth_state"] = state
+    nxt = request.query_params.get("next", "")
+    request.session["oauth_next"] = nxt if nxt.startswith("/") else ""
     q = urlencode({
         "client_id": DISCORD_CLIENT_ID,
         "redirect_uri": _redirect_uri(request),
@@ -301,16 +323,17 @@ async def auth_callback(request: Request):
     user = me.json()
     uid = str(user.get("id"))
     guilds = guilds_resp.json() if guilds_resp.status_code == 200 else []
-    is_admin = _has_manage_perm(guilds) or uid in ADMIN_IDS
-    if not is_admin:
-        request.session.clear()
-        return HTMLResponse(
-            f"<h3>접근 거부</h3><p>{user.get('username','')} 님은 이 서버의 관리 권한이 없습니다.</p>"
-            "<a href='/'>← 홈</a>", status_code=403)
+    # 누구나 로그인 가능. 서버 관리 권한자(또는 고정 ID)만 관리자 플래그.
     request.session["uid"] = uid
     request.session["uname"] = user.get("global_name") or user.get("username", "")
-    request.session["admin"] = True
-    return RedirectResponse(request.query_params.get("next") or "/")
+    request.session["admin"] = _has_manage_perm(guilds) or uid in ADMIN_IDS
+    request.session["member"] = any(str(g.get("id")) == str(GUILD_ID) for g in guilds)
+    avatar_hash = user.get("avatar")
+    if avatar_hash:
+        request.session["avatar"] = f"https://cdn.discordapp.com/avatars/{uid}/{avatar_hash}.png?size=128"
+    else:
+        request.session["avatar"] = f"https://cdn.discordapp.com/embed/avatars/{(int(uid) >> 22) % 6}.png"
+    return RedirectResponse(request.session.pop("oauth_next", "") or "/me")
 
 
 @app.get("/auth/logout")

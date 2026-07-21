@@ -58,7 +58,7 @@
       <div class="section-title">🏅 MOST 챔피언</div>
       {% for c in result.champions %}
         <div class="champ-row">
-          <b>{{ c.champion }}</b>
+          <b>{% set ci = champ_icon(c.champion) %}{% if ci %}<img src="{{ ci }}" alt="" style="width:30px;height:30px;border-radius:7px;vertical-align:middle;margin-right:6px" onerror="this.style.display='none'">{% endif %}{{ c.champion }}</b>
           <span class="muted">{{ c.games }}판 · 승률 {{ c.winrate }}% · KDA {{ c.kda }}</span>
         </div>
       {% else %}<div class="empty">챔피언 기록 없음</div>{% endfor %}
@@ -69,7 +69,7 @@
         <div class="list-row">
           <span class="pill {{ 'pill-win' if r.win else 'pill-lose' }}">{{ '승' if r.win else '패' }}</span>
           <div style="flex:1">
-            <b>{{ r.champion or '미상' }}</b>{% if r.mvp %} <span class="pill pill-gold">MVP</span>{% endif %}
+            {% set ci = champ_icon(r.champion) %}{% if ci %}<img src="{{ ci }}" alt="" style="width:28px;height:28px;border-radius:7px;vertical-align:middle;margin-right:4px" onerror="this.style.display='none'">{% endif %}<b>{{ r.champion or '미상' }}</b>{% if r.mvp %} <span class="pill pill-gold">MVP</span>{% endif %}
             <div class="muted" style="font-size:13px">{{ r.date }} · {{ MODES[r.mode] }}</div>
           </div>
           <span class="kda muted">{{ r.kills }}/{{ r.deaths }}/{{ r.assists }}</span>

@@ -35,7 +35,7 @@
         </div>
         {% for p in t.players %}
         <div class="player-line">
-          <span><b>{{ p.summoner }}</b>{% if p.champion %} <span class="muted">· {{ p.champion }}</span>{% endif %}</span>
+          <span><b>{{ p.summoner }}</b>{% if p.champion %} {% set ci = champ_icon(p.champion) %}{% if ci %}<img src="{{ ci }}" alt="" style="width:26px;height:26px;border-radius:6px;vertical-align:middle;margin-right:4px" onerror="this.style.display='none'">{% endif %}<span class="muted">{{ p.champion }}</span>{% endif %}</span>
           <span class="muted">{{ p.position }}</span>
           <span class="kda">{{ p.kills }}/{{ p.deaths }}/{{ p.assists }}</span>
         </div>

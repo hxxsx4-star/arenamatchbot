@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from arenasite import store, riot, tiericons
+from arenasite import store, riot, tiericons, champions
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="종합게임 아레나 · 내전")
@@ -31,6 +31,7 @@ templates = Jinja2Templates(directory=str(BASE / "templates"))
 templates.env.globals["MODES"] = store.MODES
 templates.env.globals["site_name"] = os.environ.get("SITE_NAME", "아레나")
 templates.env.globals["tier_key"] = tiericons.tier_key
+templates.env.globals["champ_icon"] = champions.icon_url
 templates.env.globals["profile_icon_url"] = lambda i: (
     "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/"
     f"global/default/v1/profile-icons/{i}.jpg")
@@ -132,6 +133,7 @@ async def dashboard(request: Request):
 
 @app.get("/search", response_class=HTMLResponse)
 async def search_page(request: Request):
+    await champions.ensure()
     q = (request.query_params.get("q") or "").strip()
     result = None
     live = None
@@ -155,6 +157,7 @@ async def summoners_page(request: Request):
 
 @app.get("/records", response_class=HTMLResponse)
 async def records_page(request: Request):
+    await champions.ensure()
     mode = request.query_params.get("mode") or "normal"
     if mode not in store.MODES:
         mode = "normal"

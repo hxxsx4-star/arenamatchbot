@@ -41,6 +41,36 @@ async def get_puuid(riot_id: str) -> str | None:
         return None
 
 
+async def get_match_ids(puuid: str, count: int = 5) -> list:
+    """puuid 의 최근 매치 ID 목록 (커스텀 게임 포함)."""
+    if not RIOT_API_KEY or not puuid:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=8, headers={"X-Riot-Token": RIOT_API_KEY}) as cli:
+            r = await cli.get(
+                f"{ACCOUNT_HOST}/lol/match/v5/matches/by-puuid/{puuid}/ids",
+                params={"count": count})
+            if r.status_code != 200:
+                return []
+            return r.json()
+    except Exception:
+        return []
+
+
+async def get_match(match_id: str) -> dict | None:
+    """매치 상세 (participants 에 챔피언/KDA 포함)."""
+    if not RIOT_API_KEY or not match_id:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10, headers={"X-Riot-Token": RIOT_API_KEY}) as cli:
+            r = await cli.get(f"{ACCOUNT_HOST}/lol/match/v5/matches/{match_id}")
+            if r.status_code != 200:
+                return None
+            return r.json()
+    except Exception:
+        return None
+
+
 async def get_summoner(puuid: str) -> dict | None:
     """puuid → {profileIconId, summonerLevel}. 실패 시 None."""
     if not RIOT_API_KEY or not puuid:

@@ -25,6 +25,9 @@ from utils.logs import MATCH_LOG_CH, enqueue_embed
 # 내전 결과 발표 채널 (결과 이미지 + 요약을 공개 게시)
 RESULT_ANNOUNCE_CH = 1528716794469027930
 
+# 결과 확정 후 라이엇 전적(커스텀 게임)을 탐색해 KDA/챔피언을 자동 수집하는 재시도 간격(초)
+_RECORD_RETRY_DELAYS = [20, 60, 120, 180, 300]
+
 FORUM_ID = 1527367803676655697
 MANAGER_ROLE = 1526678410124988526
 WIN_POINTS, LOSE_POINTS = 140, 60
@@ -485,6 +488,12 @@ class MatchCog(commands.Cog):
             enqueue_embed(MATCH_LOG_CH, e.to_dict(), guild=s.guild)
         except Exception:
             pass
+        # 웹사이트 기록실 자동 기록 (롤 내전: 라이엇 전적에서 KDA/챔피언 수집)
+        if s.game == "lol":
+            try:
+                asyncio.create_task(self._auto_record(s, winner, mvp_name))
+            except Exception as e3:
+                print(f"[내전 자동기록] 시작 실패: {e3}")
         # 내전 결과 발표 채널 — 결과 이미지와 함께 공개 게시
         try:
             ch = self.bot.get_channel(RESULT_ANNOUNCE_CH)
@@ -507,6 +516,125 @@ class MatchCog(commands.Cog):
                               file=discord.File(io.BytesIO(img2), filename="result.png"))
         except Exception as e2:
             print(f"[내전 결과 발표] 전송 실패: {e2}")
+
+    async def _auto_record(self, s: MatchSession, winner: int, mvp_name):
+        """결과 확정 후 라이엇 전적(커스텀 게임)에서 KDA/챔피언을 찾아
+        웹사이트 기록실에 자동 등록하고, 찾으면 상세 전적도 발표 채널에 올린다.
+        라이엇 조회 실패 시 KDA 없이 팀 구성/승패/MVP 만 기록한다."""
+        import datetime
+        from arenasite import store as site_store
+        try:
+            from arenasite import riot as site_riot
+            riot_on = site_riot.enabled()
+        except Exception:
+            site_riot, riot_on = None, False
+
+        # 팀별 등록 롤닉 수집 (미등록자는 표시 이름)
+        async def nicks(uids):
+            out = []
+            for u in uids:
+                n = await get_nickname(u, "lol")
+                m = s.member(u)
+                out.append((n or (m.display_name if m else str(u))))
+            return out
+
+        team1_nicks = await nicks(s.team1)
+        team2_nicks = await nicks(s.team2)
+        all_nicks_l = {n.lower() for n in team1_nicks + team2_nicks if "#" in n}
+
+        # 참가자 전적에서 방금 끝난 커스텀 게임 탐색 (지연 반영 대비 재시도)
+        matched = None  # {nick_lower: {champion,kills,deaths,assists}}
+        mode = "normal"
+        if riot_on and all_nicks_l:
+            probe_nick = next((n for n in team1_nicks + team2_nicks if "#" in n), None)
+            puuid = await site_riot.get_puuid(probe_nick) if probe_nick else None
+            now_ms = __import__("time").time() * 1000
+            for delay in _RECORD_RETRY_DELAYS:
+                await asyncio.sleep(delay)
+                if not puuid:
+                    break
+                for mid in await site_riot.get_match_ids(puuid, count=3):
+                    dto = await site_riot.get_match(mid)
+                    info = (dto or {}).get("info", {})
+                    if info.get("queueId") != 0:          # 0 = 커스텀 게임
+                        continue
+                    if now_ms - info.get("gameEndTimestamp", 0) > 3 * 3600 * 1000:
+                        continue
+                    parts = {}
+                    for p in info.get("participants", []):
+                        rid = f"{p.get('riotIdGameName','')}#{p.get('riotIdTagline','')}".lower()
+                        parts[rid] = {
+                            "champion": p.get("championName", ""),
+                            "kills": p.get("kills", 0),
+                            "deaths": p.get("deaths", 0),
+                            "assists": p.get("assists", 0),
+                        }
+                    # 우리 내전 참가자와 3명 이상 일치하면 그 게임으로 확정
+                    if len(all_nicks_l & set(parts)) >= min(3, len(all_nicks_l)):
+                        matched = parts
+                        if info.get("mapId") == 12:       # 칼바람 나락
+                            mode = "aram"
+                        break
+                if matched:
+                    break
+
+        def team_payload(name, nicks_list, win):
+            players = []
+            for n in nicks_list:
+                d = (matched or {}).get(n.lower(), {})
+                players.append({
+                    "summoner": n,
+                    "champion": d.get("champion", ""),
+                    "position": "",
+                    "kills": d.get("kills", 0),
+                    "deaths": d.get("deaths", 0),
+                    "assists": d.get("assists", 0),
+                })
+            return {"name": name, "win": win, "players": players}
+
+        payload = {
+            "date": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime("%Y-%m-%d"),
+            "mode": mode,
+            "title": "내전 자동기록",
+            "mvp": mvp_name or "",
+            "teams": [
+                team_payload("1팀", team1_nicks, winner == 1),
+                team_payload("2팀", team2_nicks, winner == 2),
+            ],
+        }
+        try:
+            await asyncio.to_thread(site_store.add_match, payload)
+            print(f"[내전 자동기록] 기록 완료 (KDA {'포함' if matched else '없음'})")
+        except Exception as e:
+            print(f"[내전 자동기록] 저장 실패: {e}")
+            return
+
+        # KDA 를 찾았으면 발표 채널에 상세 전적 임베드 추가
+        if matched:
+            try:
+                ch = self.bot.get_channel(RESULT_ANNOUNCE_CH)
+                if ch:
+                    def lines(nicks_list):
+                        out = []
+                        for n in nicks_list:
+                            d = (matched or {}).get(n.lower())
+                            if d:
+                                out.append(f"- **{n}** · {d['champion']} `{d['kills']}/{d['deaths']}/{d['assists']}`")
+                            else:
+                                out.append(f"- **{n}**")
+                        return "\n".join(out) or "-"
+                    e = discord.Embed(
+                        title="📋 상세 전적 (자동 수집)",
+                        color=discord.Color.gold(),
+                        timestamp=discord.utils.utcnow())
+                    e.add_field(name=f"🔵 1팀{' 👑' if winner == 1 else ''}",
+                                value=lines(team1_nicks), inline=True)
+                    e.add_field(name=f"🔴 2팀{' 👑' if winner == 2 else ''}",
+                                value=lines(team2_nicks), inline=True)
+                    e.set_footer(text="웹사이트 기록실에 자동 등록되었습니다.")
+                    await ch.send(embed=e)
+            except Exception as e:
+                print(f"[내전 자동기록] 상세 전적 전송 실패: {e}")
 
     # ----- 명령어 -----
     @match_group.command(name="진행", description="포럼 참여자들로 내전을 진행합니다.")

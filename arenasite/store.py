@@ -371,6 +371,37 @@ def summoner_stats(riot_id: str) -> dict:
 
 
 # ============================================================
+# 라이엇 계정 본인 인증 (아이콘 인증 완료된 계정)
+# ============================================================
+def get_verified(uid) -> dict | None:
+    """디스코드 uid 의 인증된 라이엇 계정 {riot_id, puuid, at} 또는 None."""
+    return _read("verified", {}).get(str(uid))
+
+
+def set_verified(uid, riot_id: str, puuid: str):
+    with _lock("verified"):
+        data = _read("verified", {})
+        data[str(uid)] = {"riot_id": riot_id.strip(), "puuid": puuid, "at": _now()}
+        _write("verified", data)
+
+
+def clear_verified(uid) -> bool:
+    with _lock("verified"):
+        data = _read("verified", {})
+        if str(uid) not in data:
+            return False
+        del data[str(uid)]
+        _write("verified", data)
+        return True
+
+
+def verified_riot_ids() -> set:
+    """인증된 라이엇 ID 집합(소문자) — 명단에 ✔ 표시용."""
+    return {v["riot_id"].strip().lower() for v in _read("verified", {}).values()
+            if v.get("riot_id")}
+
+
+# ============================================================
 # 유저 프로필 (봇이 쓰는 공유 stats.json 연동)
 # ============================================================
 def read_stats() -> dict:

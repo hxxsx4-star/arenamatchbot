@@ -24,6 +24,39 @@ def enabled() -> bool:
     return bool(RIOT_API_KEY)
 
 
+async def get_puuid(riot_id: str) -> str | None:
+    """'이름#태그' → puuid. 실패 시 None."""
+    if not RIOT_API_KEY or "#" not in riot_id:
+        return None
+    name, tag = riot_id.split("#", 1)
+    try:
+        async with httpx.AsyncClient(timeout=8, headers={"X-Riot-Token": RIOT_API_KEY}) as cli:
+            r = await cli.get(
+                f"{ACCOUNT_HOST}/riot/account/v1/accounts/by-riot-id/"
+                f"{name.strip()}/{tag.strip()}")
+            if r.status_code != 200:
+                return None
+            return r.json().get("puuid")
+    except Exception:
+        return None
+
+
+async def get_summoner(puuid: str) -> dict | None:
+    """puuid → {profileIconId, summonerLevel}. 실패 시 None."""
+    if not RIOT_API_KEY or not puuid:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8, headers={"X-Riot-Token": RIOT_API_KEY}) as cli:
+            r = await cli.get(f"{PLATFORM_HOST}/lol/summoner/v4/summoners/by-puuid/{puuid}")
+            if r.status_code != 200:
+                return None
+            d = r.json()
+            return {"profileIconId": d.get("profileIconId"),
+                    "summonerLevel": d.get("summonerLevel")}
+    except Exception:
+        return None
+
+
 async def lookup(riot_id: str) -> dict | None:
     """riot_id = '이름#태그' → {tier, rank, lp, wins, losses} 또는 None."""
     if not RIOT_API_KEY or "#" not in riot_id:

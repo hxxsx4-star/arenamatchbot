@@ -143,7 +143,8 @@ async def search_page(request: Request):
 @app.get("/summoners", response_class=HTMLResponse)
 async def summoners_page(request: Request):
     return templates.TemplateResponse(request, "summoners.html",
-                                      _ctx(request, summoners=store.list_summoners()))
+                                      _ctx(request, summoners=store.list_summoners(),
+                                           verified_ids=store.verified_riot_ids()))
 
 
 @app.get("/records", response_class=HTMLResponse)
@@ -185,6 +186,7 @@ async def my_profile(request: Request):
     return templates.TemplateResponse(request, "me.html",
                                       _ctx(request, profile=profile,
                                            match_stats=match_stats, live=live,
+                                           verified=store.get_verified(uid),
                                            is_member=bool(request.session.get("member"))))
 
 
@@ -198,6 +200,80 @@ async def tier_icon(game: str, key: str):
         raise HTTPException(404)
     return FileResponse(path, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ============ 라이엇 계정 본인 인증 (아이콘 인증) ============
+VERIFY_TTL = 600  # 인증 제한시간 10분
+# 아이콘 이미지 표시용 CDN (브라우저에서 직접 로드)
+ICON_CDN = ("https://raw.communitydragon.org/latest/plugins/"
+            "rcp-be-lol-game-data/global/default/v1/profile-icons/{id}.jpg")
+
+
+@app.post("/api/verify/start")
+async def verify_start(request: Request):
+    """인증 시작: 계정 확인 후 변경할 아이콘을 랜덤 지정."""
+    uid = request.session.get("uid")
+    if not uid:
+        raise HTTPException(401, "디스코드 로그인이 필요합니다.")
+    if not riot.enabled():
+        raise HTTPException(503, "라이엇 연동(RIOT_API_KEY)이 설정되지 않았습니다.")
+    body = await request.json()
+    riot_id = (body.get("riot_id") or "").strip()
+    if "#" not in riot_id:
+        raise HTTPException(400, "라이엇 ID를 '이름#태그' 형식으로 입력하세요.")
+    puuid = await riot.get_puuid(riot_id)
+    if not puuid:
+        raise HTTPException(404, "해당 라이엇 계정을 찾을 수 없습니다. ID를 확인하세요.")
+    summ = await riot.get_summoner(puuid)
+    current_icon = (summ or {}).get("profileIconId", -1)
+    import random
+    # 기본 제공(스타터) 아이콘 0~27 중 현재와 다른 것 지정
+    candidates = [i for i in range(28) if i != current_icon]
+    icon_id = random.choice(candidates)
+    request.session["verify"] = {
+        "riot_id": riot_id, "puuid": puuid, "icon": icon_id,
+        "exp": int(__import__("time").time()) + VERIFY_TTL,
+    }
+    return {"icon_id": icon_id, "icon_url": ICON_CDN.format(id=icon_id),
+            "expires_in": VERIFY_TTL}
+
+
+@app.post("/api/verify/check")
+async def verify_check(request: Request):
+    """인증 확인: 현재 프로필 아이콘이 지정 아이콘과 일치하면 본인 인증."""
+    uid = request.session.get("uid")
+    if not uid:
+        raise HTTPException(401, "디스코드 로그인이 필요합니다.")
+    ch = request.session.get("verify")
+    if not ch:
+        raise HTTPException(400, "진행 중인 인증이 없습니다. 먼저 인증을 시작하세요.")
+    import time as _t
+    if _t.time() > ch.get("exp", 0):
+        request.session.pop("verify", None)
+        raise HTTPException(400, "인증 시간이 만료되었습니다. 다시 시작해주세요.")
+    summ = await riot.get_summoner(ch["puuid"])
+    if not summ:
+        raise HTTPException(502, "라이엇 조회에 실패했습니다. 잠시 후 다시 시도하세요.")
+    if summ.get("profileIconId") != ch["icon"]:
+        raise HTTPException(400, "아이콘이 아직 변경되지 않았습니다. 클라이언트에서 변경 후 잠시 뒤 다시 확인하세요.")
+    store.set_verified(uid, ch["riot_id"], ch["puuid"])
+    # 인증된 계정은 소환사 명단에 자동 등록(실제 티어 조회)
+    tier = ""
+    info = await riot.lookup(ch["riot_id"])
+    if info and info.get("tier"):
+        tier = f"{info.get('tier_ko', info['tier'])} {info.get('rank', '')}".strip()
+    store.add_summoner(ch["riot_id"], tier=tier, discord_id=str(uid))
+    request.session.pop("verify", None)
+    return {"ok": True, "riot_id": ch["riot_id"]}
+
+
+@app.delete("/api/verify")
+async def verify_unlink(request: Request):
+    """본인 인증 해제."""
+    uid = request.session.get("uid")
+    if not uid:
+        raise HTTPException(401, "디스코드 로그인이 필요합니다.")
+    return {"ok": store.clear_verified(uid)}
 
 
 # ============ API: 소환사 ============

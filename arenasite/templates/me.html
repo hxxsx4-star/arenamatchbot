@@ -56,6 +56,67 @@
   </div>
 </div>
 
+<div class="card" style="margin-bottom:16px">
+  <div class="section-title">🔐 라이엇 계정 본인 인증</div>
+  {% if verified %}
+    <div class="list-row">
+      <span class="pill pill-win">✔ 인증됨</span>
+      <b style="flex:1">{{ verified.riot_id }}</b>
+      <span class="remove" onclick="unlinkRiot()">인증 해제</span>
+    </div>
+    <p class="muted" style="font-size:13px">이 라이엇 계정이 본인 소유임이 확인되었습니다. (롤/발로 공용 라이엇 계정)</p>
+  {% elif not riot_enabled %}
+    <p class="muted">라이엇 연동(RIOT_API_KEY)이 설정되면 본인 인증을 사용할 수 있어요.</p>
+  {% else %}
+    <p class="muted" style="font-size:13.5px">
+      내 라이엇 계정임을 인증하면 명단에 <b>✔ 인증 마크</b>가 붙어요.<br>
+      <b>방법:</b> 롤 클라이언트에서 <b>프로필 아이콘</b>을 지정된 아이콘으로 잠시 변경하면 끝!
+      (발로란트도 같은 라이엇 계정이라 함께 인증됩니다)</p>
+    <div id="vf_step1">
+      <div class="row" style="max-width:480px">
+        <input id="vf_id" placeholder="라이엇 ID (이름#태그)" value="{{ profile.lol_nick }}">
+        <button class="btn" style="flex:none" onclick="startVerify()">인증 시작</button>
+      </div>
+    </div>
+    <div id="vf_step2" style="display:none;margin-top:12px">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <img id="vf_icon" src="" alt="" style="width:84px;height:84px;border-radius:14px;
+             border:3px solid var(--gold);box-shadow:0 4px 14px rgba(245,180,0,.35)">
+        <div style="flex:1;min-width:220px">
+          <b>롤 클라이언트에서 프로필 아이콘을 ← 이 아이콘으로 변경하세요</b>
+          <div class="muted" style="font-size:13px">클라이언트 좌측 상단 내 아이콘 클릭 → 변경 → 저장.
+            변경 후 아래 버튼을 눌러주세요. (제한시간 10분, 인증 후 다시 바꿔도 됩니다)</div>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <button class="btn btn-blue" onclick="checkVerify()">아이콘 변경 완료 — 인증 확인</button>
+      <span id="vf_msg" class="muted" style="margin-left:10px;font-size:13px"></span>
+    </div>
+  {% endif %}
+</div>
+<script>
+async function startVerify(){
+  const riot_id=document.getElementById('vf_id').value.trim();
+  if(!riot_id.includes('#')){alert("'이름#태그' 형식으로 입력하세요");return;}
+  const r=await fetch('/api/verify/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({riot_id})});
+  const d=await r.json();
+  if(!r.ok){alert(d.detail||'시작 실패');return;}
+  document.getElementById('vf_icon').src=d.icon_url;
+  document.getElementById('vf_step2').style.display='block';
+}
+async function checkVerify(){
+  const m=document.getElementById('vf_msg'); m.textContent='확인 중...';
+  const r=await fetch('/api/verify/check',{method:'POST'});
+  const d=await r.json();
+  if(r.ok){m.textContent='✅ 인증 완료!';location.reload();}
+  else m.textContent='❌ '+(d.detail||'확인 실패');
+}
+async function unlinkRiot(){
+  if(!confirm('인증을 해제할까요?'))return;
+  await fetch('/api/verify',{method:'DELETE'});location.reload();
+}
+</script>
+
 {% if match_stats and match_stats.games %}
 <div class="card">
   <div class="section-title">⚔️ 내전 전적 — {{ match_stats.riot_id }}

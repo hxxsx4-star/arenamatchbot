@@ -16,12 +16,12 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from arenasite import store, riot
+from arenasite import store, riot, tiericons
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="종합게임 아레나 · 내전")
@@ -30,6 +30,7 @@ templates = Jinja2Templates(directory=str(BASE / "templates"))
 
 templates.env.globals["MODES"] = store.MODES
 templates.env.globals["site_name"] = os.environ.get("SITE_NAME", "아레나")
+templates.env.globals["tier_key"] = tiericons.tier_key
 
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 
@@ -185,6 +186,18 @@ async def my_profile(request: Request):
                                       _ctx(request, profile=profile,
                                            match_stats=match_stats, live=live,
                                            is_member=bool(request.session.get("member"))))
+
+
+# ============ 티어 엠블럼 이미지 ============
+@app.get("/tiericon/{game}/{key}.png")
+async def tier_icon(game: str, key: str):
+    if game not in ("lol", "val"):
+        raise HTTPException(404)
+    path = await tiericons.get_icon_path(game, key)
+    if not path:
+        raise HTTPException(404)
+    return FileResponse(path, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ============ API: 소환사 ============

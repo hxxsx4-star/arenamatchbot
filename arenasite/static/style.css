@@ -175,3 +175,8 @@ input:focus,select:focus,textarea:focus{outline:2px solid #ffd0d0;border-color:v
   padding:6px 0;border-bottom:1px solid var(--line)}
 .player-line:last-child{border-bottom:0}
 .remove{color:var(--lose);cursor:pointer;font-weight:700;font-size:13px}
+
+/* ---------- 티어 엠블럼 ---------- */
+.tier-icon{height:30px;vertical-align:middle;margin-right:4px;
+  filter:drop-shadow(0 1px 4px rgba(0,0,0,.35))}
+.tier-icon.lg{height:44px}

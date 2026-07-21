@@ -20,6 +20,7 @@
         <h2 style="font-size:22px">{{ result.riot_id }}</h2>
         <div class="muted">
           {% if live and live.tier %}
+            {% set tk = tier_key(live.tier) %}{% if tk %}<img class="tier-icon lg" src="/tiericon/lol/{{ tk }}.png" alt="" onerror="this.style.display='none'">{% endif %}
             <span class="tier-badge">{{ live.tier_ko }} {{ live.rank }} · {{ live.lp }}LP</span>
             <span style="margin-left:6px">솔랭 {{ live.wins }}승 {{ live.losses }}패</span>
           {% elif riot_enabled %}<span class="tier-badge">언랭크/조회불가</span>

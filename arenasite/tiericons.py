@@ -75,19 +75,37 @@ async def get_icon_path(game: str, key: str) -> str | None:
     if not url:
         return None
     os.makedirs(ICON_DIR, exist_ok=True)
-    path = os.path.join(ICON_DIR, f"{game}_{key}.png")
-    if os.path.exists(path) and os.path.getsize(path) > 1000:
+    # v2: 투명 여백 크롭 적용 (기존 캐시와 파일명 분리해 자동 재다운로드)
+    path = os.path.join(ICON_DIR, f"{game}_{key}_v2.png")
+    if os.path.exists(path) and os.path.getsize(path) > 500:
         return path
     try:
         async with httpx.AsyncClient(timeout=10) as cli:
             r = await cli.get(url)
             if r.status_code != 200 or len(r.content) < 1000:
                 return None
+        data = _crop_transparent(r.content)
         tmp = path + ".tmp"
         with open(tmp, "wb") as f:
-            f.write(r.content)
+            f.write(data)
         os.replace(tmp, path)
         return path
     except Exception as e:
         print(f"[티어 아이콘] {game}/{key} 다운로드 실패: {e}")
         return None
+
+
+def _crop_transparent(data: bytes) -> bytes:
+    """라이엇 원본의 큰 투명 여백을 잘라내 문양이 크게 보이게 한다."""
+    try:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(data)).convert("RGBA")
+        bbox = im.getchannel("A").getbbox()
+        if bbox:
+            im = im.crop(bbox)
+        out = io.BytesIO()
+        im.save(out, "PNG")
+        return out.getvalue()
+    except Exception:
+        return data  # Pillow 미설치 등 — 원본 그대로

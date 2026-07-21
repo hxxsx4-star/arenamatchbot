@@ -177,6 +177,6 @@ input:focus,select:focus,textarea:focus{outline:2px solid #ffd0d0;border-color:v
 .remove{color:var(--lose);cursor:pointer;font-weight:700;font-size:13px}
 
 /* ---------- 티어 엠블럼 ---------- */
-.tier-icon{height:30px;vertical-align:middle;margin-right:4px;
+.tier-icon{height:34px;vertical-align:middle;margin-right:5px;
   filter:drop-shadow(0 1px 4px rgba(0,0,0,.35))}
-.tier-icon.lg{height:44px}
+.tier-icon.lg{height:58px}

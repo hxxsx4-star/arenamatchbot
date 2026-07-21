@@ -73,15 +73,21 @@ async def lookup(riot_id: str) -> dict | None:
             puuid = r.json().get("puuid")
             if not puuid:
                 return None
+            # 소환사 프로필 아이콘 (전적 카드에 표시)
+            icon_id = None
+            sr = await cli.get(f"{PLATFORM_HOST}/lol/summoner/v4/summoners/by-puuid/{puuid}")
+            if sr.status_code == 200:
+                icon_id = sr.json().get("profileIconId")
             lr = await cli.get(
                 f"{PLATFORM_HOST}/lol/league/v4/entries/by-puuid/{puuid}")
             if lr.status_code != 200:
-                return {"tier": "", "rank": "", "puuid": puuid}
+                return {"tier": "", "rank": "", "puuid": puuid, "icon_id": icon_id}
             for entry in lr.json():
                 if entry.get("queueType") == "RANKED_SOLO_5x5":
                     tier = entry.get("tier", "")
                     return {
                         "puuid": puuid,
+                        "icon_id": icon_id,
                         "tier": tier,
                         "tier_ko": TIER_KO.get(tier, tier),
                         "rank": entry.get("rank", ""),
@@ -89,6 +95,7 @@ async def lookup(riot_id: str) -> dict | None:
                         "wins": entry.get("wins", 0),
                         "losses": entry.get("losses", 0),
                     }
-            return {"tier": "UNRANKED", "tier_ko": "언랭크", "rank": "", "puuid": puuid}
+            return {"tier": "UNRANKED", "tier_ko": "언랭크", "rank": "",
+                    "puuid": puuid, "icon_id": icon_id}
     except Exception:
         return None

@@ -24,6 +24,27 @@ LANE_CHOICES = [
 _NICK_RE = re.compile(r"^.+#.+$")  # 닉네임#태그 형식
 
 
+async def _add_site_roster(nick: str, member: discord.Member):
+    """웹사이트 소환사 명단에 자동 등록 (티어는 라이엇 연동 시 자동, 실패해도 무시)."""
+    try:
+        import asyncio
+        from arenasite import store as site_store
+        tier = ""
+        try:
+            from arenasite import riot as site_riot
+            if site_riot.enabled():
+                info = await site_riot.lookup(nick)
+                if info and info.get("tier"):
+                    tier = f"{info.get('tier_ko', info['tier'])} {info.get('rank', '')}".strip()
+        except Exception:
+            pass
+        await asyncio.to_thread(
+            site_store.add_summoner, nick, tier, str(member.id), "",
+            str(member.display_avatar.url))
+    except Exception as e:
+        print(f"[사이트 명단] 등록 실패 ({nick}): {e}")
+
+
 def _can_register_nick(member: discord.Member) -> bool:
     if member.guild_permissions.administrator or member.guild_permissions.manage_guild:
         return True
@@ -52,6 +73,8 @@ class RegistrationCog(commands.Cog):
                 "❌ 닉네임 형식이 올바르지 않습니다. `닉네임#태그` 형식으로 입력하세요. (예: 홍길동#KR1)",
                 ephemeral=True)
         await set_nickname(유저.id, 게임종류.value, nick)
+        if 게임종류.value == "lol":
+            await _add_site_roster(nick, 유저)
         game_name = "롤" if 게임종류.value == "lol" else "발로란트"
         await interaction.response.send_message(
             f"✅ {유저.mention} 님의 **{game_name}** 닉네임을 `{nick}` (으)로 등록했습니다.", ephemeral=True)

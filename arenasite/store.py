@@ -81,17 +81,22 @@ def list_summoners() -> list[dict]:
     return sorted(data, key=lambda s: s.get("added_at", 0), reverse=True)
 
 
-def add_summoner(riot_id: str, tier: str = "", discord_id: str = "", position: str = "") -> dict:
+def add_summoner(riot_id: str, tier: str = "", discord_id: str = "",
+                 position: str = "", avatar: str = "") -> dict:
     riot_id = riot_id.strip()
     with _lock("summoners"):
         data = _read("summoners", [])
         for s in data:
             if s["riot_id"].lower() == riot_id.lower():
-                # 이미 존재 → 티어만 갱신
+                # 이미 존재 → 새 정보만 갱신
                 if tier:
                     s["tier"] = tier
                 if position:
                     s["position"] = position
+                if discord_id:
+                    s["discord_id"] = discord_id
+                if avatar:
+                    s["avatar"] = avatar
                 _write("summoners", data)
                 return s
         rec = {
@@ -100,11 +105,21 @@ def add_summoner(riot_id: str, tier: str = "", discord_id: str = "", position: s
             "tier": tier,
             "position": position,
             "discord_id": discord_id,
+            "avatar": avatar,
             "added_at": _now(),
         }
         data.append(rec)
         _write("summoners", data)
         return rec
+
+
+def find_summoner(riot_id: str) -> dict | None:
+    """라이엇 ID 로 명단 레코드 조회 (대소문자 무시)."""
+    target = (riot_id or "").strip().lower()
+    for s in _read("summoners", []):
+        if s.get("riot_id", "").lower() == target:
+            return s
+    return None
 
 
 def remove_summoner(sid: str) -> bool:

@@ -15,7 +15,19 @@
 {% if result %}
   <div class="card" style="margin-bottom:16px">
     <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-      <div class="mvp-medal" style="background:linear-gradient(135deg,#2f6bff,#57d0ff)">🎮</div>
+      {% if live and live.icon_id is not none %}
+        <img src="{{ profile_icon_url(live.icon_id) }}" alt=""
+             style="width:64px;height:64px;border-radius:50%;border:3px solid var(--blue);
+                    box-shadow:0 4px 12px rgba(47,107,255,.35)"
+             onerror="this.outerHTML='<div class=&quot;mvp-medal&quot; style=&quot;background:linear-gradient(135deg,#2f6bff,#57d0ff)&quot;>🎮</div>'">
+      {% elif roster and roster.avatar %}
+        <img src="{{ roster.avatar }}" alt=""
+             style="width:64px;height:64px;border-radius:50%;border:3px solid var(--blue);
+                    box-shadow:0 4px 12px rgba(47,107,255,.35)"
+             onerror="this.outerHTML='<div class=&quot;mvp-medal&quot; style=&quot;background:linear-gradient(135deg,#2f6bff,#57d0ff)&quot;>🎮</div>'">
+      {% else %}
+        <div class="mvp-medal" style="background:linear-gradient(135deg,#2f6bff,#57d0ff)">🎮</div>
+      {% endif %}
       <div style="flex:1;min-width:200px">
         <h2 style="font-size:22px">{{ result.riot_id }}</h2>
         <div class="muted">

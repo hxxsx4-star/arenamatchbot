@@ -16,7 +16,11 @@
     <tbody>
       {% for s in summoners %}
       <tr>
-        <td><a href="/search?q={{ s.riot_id|urlencode }}"><b>{{ s.riot_id }}</b></a>
+        <td>
+          {% if s.avatar %}<img src="{{ s.avatar }}" alt="" style="width:28px;height:28px;border-radius:50%;
+            vertical-align:middle;margin-right:6px;border:2px solid var(--line)"
+            onerror="this.style.display='none'">{% endif %}
+          <a href="/search?q={{ s.riot_id|urlencode }}"><b>{{ s.riot_id }}</b></a>
           {% if s.riot_id.lower() in verified_ids %}<span class="pill pill-win" title="본인 인증 완료">✔ 인증</span>{% endif %}</td>
         <td>{% if s.tier %}{% set tk = tier_key(s.tier) %}{% if tk %}<img class="tier-icon" src="/tiericon/lol/{{ tk }}.png" alt="" onerror="this.style.display='none'">{% endif %}<span class="tier-badge">{{ s.tier }}</span>{% else %}<span class="muted">-</span>{% endif %}</td>
         <td>{{ s.position or '-' }}</td>

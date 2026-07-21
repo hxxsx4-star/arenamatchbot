@@ -31,6 +31,9 @@ templates = Jinja2Templates(directory=str(BASE / "templates"))
 templates.env.globals["MODES"] = store.MODES
 templates.env.globals["site_name"] = os.environ.get("SITE_NAME", "아레나")
 templates.env.globals["tier_key"] = tiericons.tier_key
+templates.env.globals["profile_icon_url"] = lambda i: (
+    "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/"
+    f"global/default/v1/profile-icons/{i}.jpg")
 
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 
@@ -132,12 +135,15 @@ async def search_page(request: Request):
     q = (request.query_params.get("q") or "").strip()
     result = None
     live = None
+    roster = None
     if q:
         result = store.summoner_stats(q)
+        roster = store.find_summoner(q)  # 디스코드 아바타 폴백용
         if riot.enabled():
             live = await riot.lookup(q)
     return templates.TemplateResponse(request, "search.html",
-                                      _ctx(request, q=q, result=result, live=live))
+                                      _ctx(request, q=q, result=result, live=live,
+                                           roster=roster))
 
 
 @app.get("/summoners", response_class=HTMLResponse)
@@ -262,7 +268,8 @@ async def verify_check(request: Request):
     info = await riot.lookup(ch["riot_id"])
     if info and info.get("tier"):
         tier = f"{info.get('tier_ko', info['tier'])} {info.get('rank', '')}".strip()
-    store.add_summoner(ch["riot_id"], tier=tier, discord_id=str(uid))
+    store.add_summoner(ch["riot_id"], tier=tier, discord_id=str(uid),
+                       avatar=request.session.get("avatar", ""))
     request.session.pop("verify", None)
     return {"ok": True, "riot_id": ch["riot_id"]}
 

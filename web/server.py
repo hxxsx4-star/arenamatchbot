@@ -37,7 +37,7 @@ BASE = Path(__file__).resolve().parent
 app = FastAPI(title="아레나 경매")
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
-templates.env.globals["site_name"] = os.environ.get("SITE_NAME", "아레나 볼")
+templates.env.globals["site_name"] = os.environ.get("SITE_NAME", "아레나")
 templates.env.globals["discord_invite"] = os.environ.get("DISCORD_INVITE_URL", "").strip()
 
 # 공개 URL (링크 생성용). 배포 시 환경변수로 지정.

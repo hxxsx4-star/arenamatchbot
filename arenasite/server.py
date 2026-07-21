@@ -29,7 +29,7 @@ app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 
 templates.env.globals["MODES"] = store.MODES
-templates.env.globals["site_name"] = os.environ.get("SITE_NAME", "아레나 볼")
+templates.env.globals["site_name"] = os.environ.get("SITE_NAME", "아레나")
 
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 

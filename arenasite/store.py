@@ -335,10 +335,13 @@ def _iter_player_rows(matches: list[dict]):
                 )
 
 
-def summoner_stats(riot_id: str) -> dict:
-    """특정 소환사의 전체 내전 전적 요약 + 챔피언별 + 최근 경기."""
+def summoner_stats(riot_id: str, mode: str | None = None) -> dict:
+    """특정 소환사의 내전 전적 요약 + 챔피언별 + 최근 경기.
+
+    mode 를 주면 해당 모드(normal/aram/tournament)만 집계한다.
+    """
     target = riot_id.strip().lower()
-    matches = list_matches()
+    matches = list_matches(mode)
     games = wins = k = d = a = mvp_cnt = 0
     champ = defaultdict(lambda: {"games": 0, "wins": 0, "k": 0, "d": 0, "a": 0})
     recent = []

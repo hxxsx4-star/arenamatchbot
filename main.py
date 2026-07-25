@@ -37,6 +37,7 @@ class MatchBot(commands.Bot):
             "cogs.match",      # 내전 (내전 로그 → 공유 큐)
             "cogs.auction",    # 경매 (경매 사이트는 추후 확장)
             "cogs.predict",    # 승부예측
+            "cogs.stats_lookup",  # 내전 전적 조회 (/내전전적)
         ]
         for ext in extensions:
             try:

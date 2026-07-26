@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from arenasite import store, riot, tiericons, champions
+from arenasite import store, riot, tiericons, champions, pokedex
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="종합게임 아레나 · 내전")
@@ -178,6 +178,37 @@ async def betting_page(request: Request):
 @app.get("/ladder", response_class=HTMLResponse)
 async def ladder_page(request: Request):
     return templates.TemplateResponse(request, "ladder.html", _ctx(request))
+
+
+@app.get("/pokecenter", response_class=HTMLResponse)
+async def pokecenter_page(request: Request):
+    """포켓몬 센터 — 펫봇 도감/포획 현황을 웹에서 열람."""
+    q = (request.query_params.get("q") or "").strip()
+    rarity = request.query_params.get("rarity") or ""
+    try:
+        page = max(0, int(request.query_params.get("page") or 0))
+    except ValueError:
+        page = 0
+
+    rows, total = pokedex.list_species(q, rarity, page)
+    uid = request.session.get("uid")
+    return templates.TemplateResponse(request, "pokecenter.html", _ctx(
+        request,
+        ready=pokedex.available(),
+        summary=pokedex.summary(),
+        species=rows,
+        total=total,
+        page=page,
+        page_size=pokedex.PAGE_SIZE,
+        pages=max(1, (total + pokedex.PAGE_SIZE - 1) // pokedex.PAGE_SIZE),
+        q=q,
+        rarity=rarity,
+        rarities=pokedex.RARITY_ORDER,
+        balls=pokedex.BALLS,
+        ranking=pokedex.trainer_ranking(),
+        recent=pokedex.recent_catches(),
+        my_box=pokedex.user_box(int(uid)) if uid else [],
+    ))
 
 
 @app.get("/me", response_class=HTMLResponse)

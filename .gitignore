@@ -222,3 +222,6 @@ config.ini
 *.db
 stats.json
 log_queue.db
+
+# 시크릿이 들어있는 로컬 실행 스크립트 (커밋 금지)
+run_site.sh

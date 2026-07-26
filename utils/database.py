@@ -39,7 +39,59 @@ async def init_db():
         except Exception:
             pass # 이미 칼럼이 추가되어 있으면 오류를 무시하고 넘어갑니다.
 
+        # 💡 내전 세션 (봇 재시작에도 진행 중인 내전이 이어지도록 디스크에 보관)
+        await db.execute('''CREATE TABLE IF NOT EXISTS match_sessions
+                     (message_id INTEGER PRIMARY KEY, channel_id INTEGER, guild_id INTEGER,
+                      host_id INTEGER, game TEXT, capacity INTEGER, phase TEXT,
+                      participants TEXT, captains TEXT, team1 TEXT, team2 TEXT, pool TEXT,
+                      draft_idx INTEGER, mvp_votes TEXT, winner INTEGER, updated_at REAL)''')
+
         await db.commit()
+
+
+# ==========================================
+# 💡 내전 세션 저장/복원
+# ==========================================
+
+async def save_match_session(row: dict):
+    """내전 세션 상태를 통째로 저장(upsert)합니다. 상태가 바뀔 때마다 호출."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            '''INSERT INTO match_sessions
+                 (message_id, channel_id, guild_id, host_id, game, capacity, phase,
+                  participants, captains, team1, team2, pool, draft_idx, mvp_votes, winner, updated_at)
+               VALUES (:message_id, :channel_id, :guild_id, :host_id, :game, :capacity, :phase,
+                       :participants, :captains, :team1, :team2, :pool, :draft_idx, :mvp_votes,
+                       :winner, :updated_at)
+               ON CONFLICT(message_id) DO UPDATE SET
+                 phase=excluded.phase, participants=excluded.participants,
+                 captains=excluded.captains, team1=excluded.team1, team2=excluded.team2,
+                 pool=excluded.pool, draft_idx=excluded.draft_idx, mvp_votes=excluded.mvp_votes,
+                 winner=excluded.winner, updated_at=excluded.updated_at''',
+            row,
+        )
+        await db.commit()
+
+
+async def load_active_match_sessions(max_age_sec: int = 24 * 3600):
+    """아직 끝나지 않은 내전 세션들을 불러옵니다. (봇 시작 시 뷰 재등록용)"""
+    cutoff = time.time() - max_age_sec
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM match_sessions WHERE phase != 'done' AND updated_at >= ? ORDER BY updated_at",
+            (cutoff,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def purge_old_match_sessions(max_age_sec: int = 7 * 24 * 3600) -> int:
+    """오래된 내전 세션 기록을 정리합니다."""
+    cutoff = time.time() - max_age_sec
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("DELETE FROM match_sessions WHERE updated_at < ?", (cutoff,))
+        await db.commit()
+        return cur.rowcount
 
 # ==========================================
 # 💡 기존 유저 및 전설이 관련 함수

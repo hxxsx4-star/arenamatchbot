@@ -1,42 +1,61 @@
+import os
+
 import discord
 import time
 import aiosqlite
 from utils.stats import spend_points, add_points, get_points, format_num
 
+# 승부예측 DB 경로.
+# 예전엔 상대경로('predictions.db')라 도커에서 /app 안에 만들어졌고,
+# 컨테이너를 다시 만들 때마다 통째로 사라졌다. 베팅 포인트는 공유 stats.json 에서
+# 이미 차감된 뒤라 기록만 날아가면 정산도 환불도 불가능해진다.
+# → 반드시 공유 볼륨에 둔다.
+SHARED_DIR = os.environ.get("ARENA_SHARED_DIR", "/home/hxxsx4/shared_data")
+PREDICT_DB_PATH = os.environ.get("ARENA_PREDICT_DB_PATH",
+                                 os.path.join(SHARED_DIR, "predictions.db"))
+
 # 💡 predictions.db 전용 독립 비동기 로컬 데이터 전송 함수군
 async def local_get_bet_session(topic):
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM betting_sessions WHERE topic = ?", (topic,)) as cursor:
             return await cursor.fetchone()
 
 async def local_get_bet_session_by_message_id(message_id):
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM betting_sessions WHERE message_id = ?", (message_id,)) as cursor:
             return await cursor.fetchone()
 
 async def local_update_bet_status(topic, status):
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         await db.execute("UPDATE betting_sessions SET status = ? WHERE topic = ?", (status, topic))
         await db.commit()
 
 async def local_create_bet_session(topic, opt_a, opt_b, msg_id, ch_id):
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         await db.execute("INSERT INTO betting_sessions (topic, option_a, option_b, status, message_id, channel_id) VALUES (?, ?, ?, 'active', ?, ?)",
                          (topic, opt_a, opt_b, msg_id, ch_id))
         await db.commit()
 
-async def local_add_bet_record(topic, user_id, option, amount):
-    async with aiosqlite.connect('predictions.db') as db:
-        await db.execute('''INSERT INTO betting_records (topic, user_id, option, amount)
+async def local_add_bet_record(topic, user_id, option, amount) -> bool:
+    """베팅을 기록한다. 이미 반대쪽에 걸어둔 상태면 아무것도 하지 않고 False.
+
+    양방향 베팅 차단을 '조회 후 차감'으로만 하면, 두 옵션을 동시에 누를 때
+    둘 다 통과해 한쪽 기록이 반대 옵션 금액에 합쳐질 수 있다.
+    WHERE 조건으로 옵션이 같을 때만 누적되게 해서 DB 수준에서 막는다.
+    """
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
+        cur = await db.execute('''INSERT INTO betting_records (topic, user_id, option, amount)
                           VALUES (?, ?, ?, ?)
-                          ON CONFLICT(topic, user_id) DO UPDATE SET amount = amount + ?''',
-                       (topic, user_id, option, amount, amount))
+                          ON CONFLICT(topic, user_id) DO UPDATE SET amount = amount + excluded.amount
+                          WHERE betting_records.option = excluded.option''',
+                       (topic, user_id, option, amount))
         await db.commit()
+        return cur.rowcount > 0
 
 async def local_get_bet_totals(topic):
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         async with db.execute("SELECT option, SUM(amount) FROM betting_records WHERE topic = ? GROUP BY option", (topic,)) as cursor:
             rows = await cursor.fetchall()
         totals = {'A': 0, 'B': 0}
@@ -45,17 +64,17 @@ async def local_get_bet_totals(topic):
         return totals
 
 async def local_get_bet_winners(topic, win_option):
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         async with db.execute("SELECT user_id, amount FROM betting_records WHERE topic = ? AND option = ?", (topic, win_option)) as cursor:
             return await cursor.fetchall()
 
 async def local_get_user_bet(topic, user_id):
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         async with db.execute("SELECT option, amount FROM betting_records WHERE topic = ? AND user_id = ?", (topic, user_id)) as cursor:
             return await cursor.fetchone()
 
 async def local_get_user_all_bets(user_id):
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute('''
             SELECT r.topic, r.option, r.amount, s.status, s.option_a, s.option_b
@@ -66,13 +85,13 @@ async def local_get_user_all_bets(user_id):
             return await cursor.fetchall()
 
 async def local_set_bet_close_time(topic, close_at):
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         await db.execute("UPDATE betting_sessions SET close_at = ? WHERE topic = ?", (close_at, topic))
         await db.commit()
 
 async def local_get_expired_bets():
     now = time.time()
-    async with aiosqlite.connect('predictions.db') as db:
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM betting_sessions WHERE status = 'active' AND close_at IS NOT NULL AND close_at <= ?", (now,)) as cursor:
             return await cursor.fetchall()
@@ -151,7 +170,12 @@ class BetInputModal(discord.ui.Modal):
             current = await get_points(user_id)
             return await interaction.response.send_message(f"❌ 포인트가 부족합니다! (현재 보유: {format_num(current)}P)", ephemeral=True)
 
-        await local_add_bet_record(self.topic, user_id, self.option, bet_amount)
+        ok = await local_add_bet_record(self.topic, user_id, self.option, bet_amount)
+        if not ok:
+            # 반대쪽에 이미 베팅된 상태(동시 클릭 등). 차감한 포인트를 되돌린다.
+            await add_points(user_id, bet_amount)
+            return await interaction.response.send_message(
+                "❌ 이미 반대쪽 옵션에 베팅되어 있습니다. 포인트는 돌려드렸습니다.", ephemeral=True)
 
         session = await local_get_bet_session(self.topic)
         new_embed = await generate_bet_embed(self.topic, session['option_a'], session['option_b'], session['status'])

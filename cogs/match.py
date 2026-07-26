@@ -12,12 +12,16 @@
 """
 import io
 import re
+import json
+import time
 import asyncio
 
 import discord
 from discord.ext import commands
 from discord import app_commands
 
+from utils.database import (save_match_session, load_active_match_sessions,
+                            purge_old_match_sessions)
 from utils.stats import add_points, get_nickname, get_lanes, format_num
 from utils.tiers import get_tier
 from utils.logs import MATCH_LOG_CH, enqueue_embed
@@ -31,6 +35,13 @@ _RECORD_RETRY_DELAYS = [20, 60, 120, 180, 300]
 FORUM_ID = 1527367803676655697
 MANAGER_ROLE = 1526678410124988526
 WIN_POINTS, LOSE_POINTS = 140, 60
+# MVP 보상. 동점(공동 MVP)이면 이 금액을 인원수로 나눠 지급한다.
+# (나누지 않으면 5명 동점 시 10,000P 가 한 판에서 풀려 경제가 무너진다)
+MVP_POINTS = 2000
+
+# 포럼 스캔 범위. 좁으면 초반에 참여 표현을 남긴 사람이 누락된다.
+SCAN_ARCHIVED_THREADS = 30
+SCAN_HISTORY_LIMIT = 1000
 
 # 참여 표현 (정규화 후 정확히 일치)
 TRIGGERS = {"ㅅ", "ㅅㅅ", "손", "저요", "나", "저", "ㄱ", "ㄱㄱ", "참여", "콜", "고", "ㅇㅋ", "ㅇ"}
@@ -46,7 +57,16 @@ GAME_CHOICES = [
 GAME_LABELS = {"lol": "리그오브레전드", "val": "발로란트", "ow": "오버워치",
                "pubg": "배틀그라운드", "goose": "구스구스덕", "etc": "기타게임"}
 TEAM_GAMES = {"lol", "val"}                 # 팀짜기 지원
-DRAFT_PICKS = [1, 2, 2, 1, 1, 2, 2, 1]      # 팀장 선택 후 픽 순서 (팀 번호) → 팀1:5, 팀2:5
+
+
+def make_draft_order(total_players: int) -> list[int]:
+    """총 인원수에 맞는 스네이크 드래프트 순서(팀 번호 리스트)를 만든다.
+
+    팀장 2명을 뺀 나머지를 1,2,2,1,1,2,2,1... 순으로 나눠 양 팀이 같은 수가 되게 한다.
+    (10명이면 기존과 동일한 [1,2,2,1,1,2,2,1])
+    """
+    picks = total_players - 2
+    return [1 if ((i + 1) // 2) % 2 == 0 else 2 for i in range(picks)]
 
 _norm_re = re.compile(r"[^가-힣ㄱ-ㅎa-zA-Z]")
 
@@ -59,9 +79,19 @@ def is_trigger(content: str) -> bool:
 
 
 def can_manage(member: discord.Member, host_id: int) -> bool:
-    """방장 / 내전매니저 / 서버 관리 권한이면 True."""
+    """방장 / 내전매니저 / 서버 관리 권한이면 True. (모집·팀짜기 운영용)"""
     if member.id == host_id:
         return True
+    return can_finalize(member)
+
+
+def can_finalize(member: discord.Member) -> bool:
+    """내전매니저 / 서버 관리 권한이면 True. (결과 확정 = 포인트 지급용)
+
+    승리 확정은 참가자 전원에게 포인트를 지급하므로 방장이라는 이유만으로는 허용하지 않는다.
+    /내전 진행 은 누구나 칠 수 있고 실행자가 곧 방장이 되기 때문에,
+    방장을 통과시키면 아무나 판을 만들어 포인트를 찍어낼 수 있다.
+    """
     if member.guild_permissions.administrator or member.guild_permissions.manage_guild:
         return True
     return any(r.id == MANAGER_ROLE for r in member.roles)
@@ -138,12 +168,15 @@ def render_team_image(title, blue, red, mvp_name=None, winner=None):
 
 # ============ 세션 ============
 class MatchSession:
-    def __init__(self, host: discord.Member, game: str, capacity: int, participants: list[discord.Member]):
-        self.host_id = host.id
-        self.guild = host.guild
+    """내전 한 판의 상태. 봇 재시작에도 이어지도록 DB 에 통째로 저장/복원된다."""
+
+    def __init__(self, guild: discord.Guild, host_id: int, game: str, capacity: int,
+                 participant_ids: list[int]):
+        self.guild = guild
+        self.host_id = host_id
         self.game = game
         self.capacity = capacity
-        self.participants = participants          # discord.Member 리스트
+        self.participant_ids = list(participant_ids)   # Member 가 아니라 ID 로 보관(직렬화용)
         self.lock = asyncio.Lock()
         # 팀짜기 상태
         self.phase = "list"                       # list/captain1/captain2/draft/teams/done
@@ -154,16 +187,64 @@ class MatchSession:
         self.draft_idx = 0
         self.mvp_votes: dict[int, int] = {}
         self.winner = None
+        # 패널 메시지 위치 (저장 키 겸 복원 대상)
+        self.message_id = 0
+        self.channel_id = 0
 
+    # ----- 멤버 조회 -----
     def member(self, uid: int):
-        return self.guild.get_member(uid) or next((m for m in self.participants if m.id == uid), None)
+        return self.guild.get_member(uid) if self.guild else None
+
+    @property
+    def participants(self) -> list[discord.Member]:
+        """서버에 남아 있는 참가자만 Member 로 돌려준다."""
+        out = []
+        for uid in self.participant_ids:
+            m = self.member(uid)
+            if m is not None:
+                out.append(m)
+        return out
 
     def in_match(self, uid: int) -> bool:
-        return any(m.id == uid for m in self.participants)
+        return uid in self.participant_ids
+
+    def draft_order(self) -> list[int]:
+        return make_draft_order(len(self.participant_ids))
+
+    # ----- 직렬화 -----
+    def to_row(self) -> dict:
+        return {
+            "message_id": self.message_id, "channel_id": self.channel_id,
+            "guild_id": self.guild.id if self.guild else 0,
+            "host_id": self.host_id, "game": self.game, "capacity": self.capacity,
+            "phase": self.phase,
+            "participants": json.dumps(self.participant_ids),
+            "captains": json.dumps(self.captains),
+            "team1": json.dumps(self.team1), "team2": json.dumps(self.team2),
+            "pool": json.dumps(self.pool), "draft_idx": self.draft_idx,
+            "mvp_votes": json.dumps({str(k): v for k, v in self.mvp_votes.items()}),
+            "winner": self.winner or 0, "updated_at": time.time(),
+        }
+
+    @classmethod
+    def from_row(cls, guild: discord.Guild, row: dict) -> "MatchSession":
+        s = cls(guild, row["host_id"], row["game"], row["capacity"],
+                json.loads(row["participants"]))
+        s.phase = row["phase"]
+        s.captains = json.loads(row["captains"])
+        s.team1 = json.loads(row["team1"])
+        s.team2 = json.loads(row["team2"])
+        s.pool = json.loads(row["pool"])
+        s.draft_idx = row["draft_idx"]
+        s.mvp_votes = {int(k): v for k, v in json.loads(row["mvp_votes"]).items()}
+        s.winner = row["winner"] or None
+        s.message_id = row["message_id"]
+        s.channel_id = row["channel_id"]
+        return s
 
     # ----- 팀짜기 로직 (순수) -----
     def start_draft(self):
-        self.pool = [m.id for m in self.participants]
+        self.pool = list(self.participant_ids)
         self.team1, self.team2, self.captains = [], [], [0, 0]
         self.draft_idx = 0
         self.phase = "captain1"
@@ -175,7 +256,8 @@ class MatchSession:
         self.phase = "captain2" if team == 1 else "draft"
 
     def current_team(self) -> int:
-        return DRAFT_PICKS[self.draft_idx]
+        order = self.draft_order()
+        return order[self.draft_idx] if self.draft_idx < len(order) else 1
 
     def current_captain(self) -> int:
         return self.captains[self.current_team() - 1]
@@ -188,14 +270,19 @@ class MatchSession:
         self._auto_finish()
 
     def _auto_finish(self):
+        order = self.draft_order()
         # 마지막 1명은 선택지가 없으므로 자동 배정 (남은 인원이 1명일 때)
-        if self.draft_idx < len(DRAFT_PICKS) and len(self.pool) == 1:
-            team = DRAFT_PICKS[self.draft_idx]
+        if self.draft_idx < len(order) and len(self.pool) == 1:
+            team = order[self.draft_idx]
             uid = self.pool.pop(0)
             (self.team1 if team == 1 else self.team2).append(uid)
             self.draft_idx += 1
-        if self.draft_idx >= len(DRAFT_PICKS):
+        if self.draft_idx >= len(order):
             self.phase = "teams"
+
+    def mvp_candidates(self, exclude_id: int | None = None) -> list[int]:
+        """MVP 투표 후보. 본인은 제외한다(자기 자신에게 투표 불가)."""
+        return [u for u in (self.team1 + self.team2) if u != exclude_id]
 
     def finalize(self, winner: int):
         self.winner = winner
@@ -205,17 +292,24 @@ class MatchSession:
         return win_ids, lose_ids
 
     def mvp(self):
+        """최다 득표자 1명. (하위호환용 — 동점이면 mvp_all() 을 쓰는 게 정확하다)"""
+        winners = self.mvp_all()
+        return winners[0] if winners else None
+
+    def mvp_all(self) -> list[int]:
+        """최다 득표자 전원. 동점이면 여러 명이 나온다(공동 MVP)."""
         if not self.mvp_votes:
-            return None
+            return []
         tally: dict[int, int] = {}
         for t in self.mvp_votes.values():
             tally[t] = tally.get(t, 0) + 1
-        return max(tally, key=tally.get)
+        top = max(tally.values())
+        return [uid for uid, c in tally.items() if c == top]
 
 
 # ============ Views ============
 class ListView(discord.ui.View):
-    """리스트 화면. 롤/발로면 '내전 시작' 버튼."""
+    """리스트 화면. 롤/발로면 '내전 시작' 버튼 + 참여자 수동 추가/제외."""
     def __init__(self, cog: "MatchCog", session: MatchSession):
         super().__init__(timeout=None)
         self.cog = cog
@@ -223,7 +317,8 @@ class ListView(discord.ui.View):
         if session.game not in TEAM_GAMES:
             self.remove_item(self.start_button)
 
-    @discord.ui.button(label="내전 시작 (팀짜기)", style=discord.ButtonStyle.success, emoji="⚔️")
+    @discord.ui.button(label="내전 시작 (팀짜기)", style=discord.ButtonStyle.success, emoji="⚔️",
+                       custom_id="match:start", row=0)
     async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         s = self.session
         if not can_manage(interaction.user, s.host_id):
@@ -231,12 +326,65 @@ class ListView(discord.ui.View):
         async with s.lock:
             if s.phase != "list":
                 return await interaction.response.send_message("이미 진행 중입니다.", ephemeral=True)
-            if len(s.participants) != 10:
+            n = len(s.participant_ids)
+            if n < 4 or n % 2 != 0:
                 return await interaction.response.send_message(
-                    f"❌ 팀짜기는 정확히 10명이 필요합니다. (현재 {len(s.participants)}명)", ephemeral=True)
+                    f"❌ 팀짜기는 4명 이상의 짝수 인원이 필요합니다. (현재 {n}명)\n"
+                    "참여자 추가/제외 메뉴로 인원을 맞춰주세요.", ephemeral=True)
             s.start_draft()
+        await self.cog.persist(s)
         await interaction.response.edit_message(
             embed=self.cog.captain_embed(s, 1), view=CaptainView(self.cog, s, 1))
+
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="➕ 참여자 추가 (포럼에 안 쓴 사람)",
+                       min_values=1, max_values=10, custom_id="match:add", row=1)
+    async def add_member(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        s = self.session
+        if not can_manage(interaction.user, s.host_id):
+            return await interaction.response.send_message("❌ 방장/내전매니저/관리자만 변경할 수 있습니다.", ephemeral=True)
+        async with s.lock:
+            if s.phase != "list":
+                return await interaction.response.send_message("이미 팀짜기가 시작되어 변경할 수 없습니다.", ephemeral=True)
+            added, dup = [], []
+            for u in select.values:
+                if u.id in s.participant_ids:
+                    dup.append(u.display_name)
+                else:
+                    s.participant_ids.append(u.id)
+                    added.append(u.display_name)
+        await self.cog.persist(s)
+        await interaction.response.edit_message(embed=await self.cog.list_embed(s), view=self)
+        msg = []
+        if added:
+            msg.append(f"➕ 추가: {', '.join(added)}")
+        if dup:
+            msg.append(f"⏭️ 이미 있음: {', '.join(dup)}")
+        await interaction.followup.send("\n".join(msg) or "변경 없음", ephemeral=True)
+
+    @discord.ui.select(cls=discord.ui.UserSelect, placeholder="➖ 참여자 제외",
+                       min_values=1, max_values=10, custom_id="match:remove", row=2)
+    async def remove_member(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        s = self.session
+        if not can_manage(interaction.user, s.host_id):
+            return await interaction.response.send_message("❌ 방장/내전매니저/관리자만 변경할 수 있습니다.", ephemeral=True)
+        async with s.lock:
+            if s.phase != "list":
+                return await interaction.response.send_message("이미 팀짜기가 시작되어 변경할 수 없습니다.", ephemeral=True)
+            removed, absent = [], []
+            for u in select.values:
+                if u.id in s.participant_ids:
+                    s.participant_ids.remove(u.id)
+                    removed.append(u.display_name)
+                else:
+                    absent.append(u.display_name)
+        await self.cog.persist(s)
+        await interaction.response.edit_message(embed=await self.cog.list_embed(s), view=self)
+        msg = []
+        if removed:
+            msg.append(f"➖ 제외: {', '.join(removed)}")
+        if absent:
+            msg.append(f"⏭️ 명단에 없음: {', '.join(absent)}")
+        await interaction.followup.send("\n".join(msg) or "변경 없음", ephemeral=True)
 
 
 class CaptainView(discord.ui.View):
@@ -247,7 +395,8 @@ class CaptainView(discord.ui.View):
         self.team = team
         options = [discord.SelectOption(label=(session.member(uid).display_name if session.member(uid) else str(uid)),
                                         value=str(uid)) for uid in session.pool]
-        self.select = discord.ui.Select(placeholder=f"{team}팀 팀장을 선택하세요", options=options[:25])
+        self.select = discord.ui.Select(placeholder=f"{team}팀 팀장을 선택하세요", options=options[:25],
+                                        custom_id=f"match:captain{team}")
         self.select.callback = self.on_select
         self.add_item(self.select)
 
@@ -263,6 +412,7 @@ class CaptainView(discord.ui.View):
             if uid not in s.pool:
                 return await interaction.response.send_message("이미 선택된 인원입니다.", ephemeral=True)
             s.set_captain(self.team, uid)
+        await self.cog.persist(s)
         if s.phase == "captain2":
             await interaction.response.edit_message(embed=self.cog.captain_embed(s, 2), view=CaptainView(self.cog, s, 2))
         else:
@@ -277,7 +427,8 @@ class DraftView(discord.ui.View):
         options = [discord.SelectOption(label=(session.member(uid).display_name if session.member(uid) else str(uid)),
                                         value=str(uid)) for uid in session.pool]
         team = session.current_team()
-        self.select = discord.ui.Select(placeholder=f"{team}팀 팀장이 픽하세요", options=options[:25])
+        self.select = discord.ui.Select(placeholder=f"{team}팀 팀장이 픽하세요", options=options[:25],
+                                        custom_id="match:draft")
         self.select.callback = self.on_select
         self.add_item(self.select)
 
@@ -293,6 +444,7 @@ class DraftView(discord.ui.View):
             if uid not in s.pool:
                 return await interaction.response.send_message("이미 선택된 인원입니다.", ephemeral=True)
             s.pick(uid)
+        await self.cog.persist(s)
         if s.phase == "teams":
             await self.cog.show_teams(interaction, s)
         else:
@@ -305,37 +457,61 @@ class ResultView(discord.ui.View):
         self.cog = cog
         self.session = session
 
-    @discord.ui.button(label="MVP 투표", style=discord.ButtonStyle.primary, emoji="🏅")
+    @discord.ui.button(label="MVP 투표", style=discord.ButtonStyle.primary, emoji="🏅",
+                       custom_id="match:mvp")
     async def mvp_vote(self, interaction: discord.Interaction, button: discord.ui.Button):
         s = self.session
         if not s.in_match(interaction.user.id):
             return await interaction.response.send_message("❌ 참가자만 투표할 수 있습니다.", ephemeral=True)
-        await interaction.response.send_message("MVP를 선택하세요.", view=MVPVoteView(self.cog, s, interaction.user.id), ephemeral=True)
+        if s.phase == "done":
+            return await interaction.response.send_message(
+                "❌ 이미 결과가 확정되어 투표가 마감되었습니다.", ephemeral=True)
+        if not s.mvp_candidates(interaction.user.id):
+            return await interaction.response.send_message("투표할 대상이 없습니다.", ephemeral=True)
+        await interaction.response.send_message(
+            "MVP를 선택하세요. (본인 제외)",
+            view=MVPVoteView(self.cog, s, interaction.user.id), ephemeral=True)
 
-    @discord.ui.button(label="1팀 승리", style=discord.ButtonStyle.secondary, emoji="🔵")
+    @discord.ui.button(label="1팀 승리", style=discord.ButtonStyle.secondary, emoji="🔵",
+                       custom_id="match:win1")
     async def win1(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.declare_winner(interaction, self.session, 1)
 
-    @discord.ui.button(label="2팀 승리", style=discord.ButtonStyle.secondary, emoji="🔴")
+    @discord.ui.button(label="2팀 승리", style=discord.ButtonStyle.secondary, emoji="🔴",
+                       custom_id="match:win2")
     async def win2(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.cog.declare_winner(interaction, self.session, 2)
 
 
 class MVPVoteView(discord.ui.View):
+    """개인에게 임시로 보내는 투표 창(에페메랄)이라 영구 뷰가 아니어도 된다."""
     def __init__(self, cog: "MatchCog", session: MatchSession, voter_id: int):
         super().__init__(timeout=60)
+        self.cog = cog
         self.session = session
         self.voter_id = voter_id
+        # 본인은 후보에서 제외 (자기 자신에게 투표 불가)
         opts = [discord.SelectOption(label=(session.member(uid).display_name if session.member(uid) else str(uid)),
-                                     value=str(uid)) for uid in (session.team1 + session.team2)]
+                                     value=str(uid)) for uid in session.mvp_candidates(voter_id)]
         self.select = discord.ui.Select(placeholder="MVP 선택", options=opts[:25])
         self.select.callback = self.on_select
         self.add_item(self.select)
 
     async def on_select(self, interaction: discord.Interaction):
-        async with self.session.lock:
-            self.session.mvp_votes[self.voter_id] = int(self.select.values[0])
-        await interaction.response.edit_message(content="✅ MVP 투표가 반영되었습니다!", view=None)
+        s = self.session
+        target = int(self.select.values[0])
+        if target == self.voter_id:
+            return await interaction.response.edit_message(
+                content="❌ 자기 자신에게는 투표할 수 없습니다.", view=None)
+        async with s.lock:
+            if s.phase == "done":
+                return await interaction.response.edit_message(
+                    content="❌ 이미 결과가 확정되어 투표가 마감되었습니다.", view=None)
+            s.mvp_votes[self.voter_id] = target
+        await self.cog.persist(s)
+        name = s.member(target).display_name if s.member(target) else str(target)
+        await interaction.response.edit_message(
+            content=f"✅ **{name}** 님에게 MVP 투표했습니다!", view=None)
 
 
 class MatchCog(commands.Cog):
@@ -344,6 +520,66 @@ class MatchCog(commands.Cog):
         self.bot = bot
 
     match_group = app_commands.Group(name="내전", description="내전 관련 명령어")
+
+    # ----- 세션 영속화 -----
+    async def persist(self, s: MatchSession):
+        """세션 상태를 디스크에 저장한다. 상태가 바뀔 때마다 호출."""
+        if not s.message_id:
+            return
+        try:
+            await save_match_session(s.to_row())
+        except Exception as e:
+            print(f"[내전 세션 저장 실패] {e}")
+
+    def view_for(self, s: MatchSession):
+        """현재 단계에 맞는 뷰를 만든다. (재시작 복원 / 화면 갱신 공용)"""
+        if s.phase == "list":
+            return ListView(self, s)
+        if s.phase == "captain1":
+            return CaptainView(self, s, 1)
+        if s.phase == "captain2":
+            return CaptainView(self, s, 2)
+        if s.phase == "draft":
+            return DraftView(self, s)
+        if s.phase == "teams":
+            return ResultView(self, s)
+        return None
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """재시작 전에 진행 중이던 내전의 버튼이 계속 동작하도록 뷰를 다시 붙인다.
+
+        (뷰가 메모리에만 있어서, 예전에는 재배포할 때마다 진행 중인 내전이
+         '상호작용 실패'가 되고 처음부터 다시 해야 했다.)
+        """
+        if getattr(self, "_restored", False):
+            return
+        self._restored = True
+        try:
+            rows = await load_active_match_sessions()
+        except Exception as e:
+            print(f"[내전 세션 복원 실패] {e}")
+            return
+        ok = 0
+        for row in rows:
+            guild = self.bot.get_guild(row["guild_id"])
+            if guild is None:
+                continue
+            try:
+                s = MatchSession.from_row(guild, row)
+                view = self.view_for(s)
+                if view is None:
+                    continue
+                self.bot.add_view(view, message_id=s.message_id)
+                ok += 1
+            except Exception as e:
+                print(f"[내전 세션 복원 건너뜀] msg={row.get('message_id')}: {e}")
+        if ok:
+            print(f"♻️ 진행 중이던 내전 {ok}건의 버튼을 복원했습니다.")
+        try:
+            await purge_old_match_sessions()
+        except Exception as e:
+            print(f"[내전 세션 정리 실패] {e}")
 
     # ----- 포럼 반응 -----
     @commands.Cog.listener()
@@ -368,20 +604,21 @@ class MatchCog(commands.Cog):
         if forum is not None:
             threads = list(getattr(forum, "threads", []))
             try:
-                async for th in forum.archived_threads(limit=10):
+                async for th in forum.archived_threads(limit=SCAN_ARCHIVED_THREADS):
                     threads.append(th)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[내전 스캔] 보관된 스레드 조회 실패: {e}")
         for th in threads:
             try:
-                async for msg in th.history(limit=300):
+                async for msg in th.history(limit=SCAN_HISTORY_LIMIT):
                     if msg.author.bot or msg.author.id in found:
                         continue
                     if is_trigger(msg.content):
                         m = guild.get_member(msg.author.id)
                         if m:
                             found[m.id] = m
-            except Exception:
+            except Exception as e:
+                print(f"[내전 스캔] 스레드 '{getattr(th, 'name', th)}' 읽기 실패: {e}")
                 continue
         return list(found.values())
 
@@ -452,21 +689,29 @@ class MatchCog(commands.Cog):
             await interaction.response.edit_message(content=content, embed=None, attachments=[file], view=view)
 
     async def declare_winner(self, interaction: discord.Interaction, s: MatchSession, winner: int):
-        if not can_manage(interaction.user, s.host_id):
-            return await interaction.response.send_message("❌ 내전매니저/관리자만 결과를 확정할 수 있습니다.", ephemeral=True)
+        # 포인트가 지급되는 단계라 방장 특권으로는 통과시키지 않는다.
+        if not can_finalize(interaction.user):
+            return await interaction.response.send_message(
+                "❌ 결과 확정은 내전매니저/관리자만 할 수 있습니다. (방장이어도 불가)", ephemeral=True)
         async with s.lock:
             if s.phase == "done":
                 return await interaction.response.send_message("이미 결과가 확정되었습니다.", ephemeral=True)
             if s.phase != "teams":
                 return await interaction.response.send_message("아직 팀 편성이 끝나지 않았습니다.", ephemeral=True)
             win_ids, lose_ids = s.finalize(winner)
+        await self.persist(s)
         for uid in win_ids:
             await add_points(uid, WIN_POINTS)
         for uid in lose_ids:
             await add_points(uid, LOSE_POINTS)
-        mvp_id = s.mvp()
-        mvp_member = s.member(mvp_id) if mvp_id else None
-        mvp_name = (await short_name(mvp_member, s.game)) if mvp_member else None
+        # 동점이면 공동 MVP 로 모두 표기한다. (예전엔 조용히 한 명만 뽑혔다)
+        mvp_ids = s.mvp_all()
+        mvp_names = [await short_name(s.member(u), s.game) for u in mvp_ids if s.member(u)]
+        mvp_name = " / ".join(mvp_names) if mvp_names else None
+        # MVP 보상 지급 (공동 MVP 면 균등 분배)
+        mvp_reward = MVP_POINTS // len(mvp_ids) if mvp_ids else 0
+        for uid in mvp_ids:
+            await add_points(uid, mvp_reward)
         await interaction.response.defer()
         await self.show_teams(interaction, s, winner=winner, mvp_name=mvp_name)
         # 내전 종료 로그 (내전로그 채널) — 게임/승패/팀 편성/MVP
@@ -482,9 +727,15 @@ class MatchCog(commands.Cog):
                         value="\n".join(f"- {n}" for n in blue_names) or "-", inline=True)
             e.add_field(name=f"🔴 2팀{' 👑 WIN' if winner == 2 else ''}",
                         value="\n".join(f"- {n}" for n in red_names) or "-", inline=True)
-            e.add_field(name="보상", value=f"승리팀 +{WIN_POINTS}P / 패배팀 +{LOSE_POINTS}P", inline=False)
+            reward_text = f"승리팀 +{WIN_POINTS}P / 패배팀 +{LOSE_POINTS}P"
+            if mvp_ids:
+                reward_text += f"\nMVP +{format_num(mvp_reward)}P"
+                if len(mvp_ids) > 1:
+                    reward_text += f" (공동 {len(mvp_ids)}명 · {format_num(MVP_POINTS)}P 분배)"
+            e.add_field(name="보상", value=reward_text, inline=False)
             if mvp_name:
-                e.add_field(name="🏅 MVP", value=mvp_name, inline=False)
+                e.add_field(name=("🏅 공동 MVP" if len(mvp_names) > 1 else "🏅 MVP"),
+                            value=mvp_name, inline=False)
             enqueue_embed(MATCH_LOG_CH, e.to_dict(), guild=s.guild)
         except Exception:
             pass
@@ -508,7 +759,8 @@ class MatchCog(commands.Cog):
                     title=f"🏆 내전 결과 · {GAME_LABELS.get(s.game, s.game)}",
                     description=(f"**{winner}팀 승리!**"
                                  f"{f' · 🏅 MVP: **{mvp_name}**' if mvp_name else ''}\n"
-                                 f"승리팀 +{WIN_POINTS}P / 패배팀 +{LOSE_POINTS}P"),
+                                 f"승리팀 +{WIN_POINTS}P / 패배팀 +{LOSE_POINTS}P"
+                                 f"{f' · MVP +{format_num(mvp_reward)}P' if mvp_ids else ''}"),
                     color=discord.Color.blue() if winner == 1 else discord.Color.red(),
                     timestamp=discord.utils.utcnow())
                 res.set_image(url="attachment://result.png")
@@ -647,8 +899,20 @@ class MatchCog(commands.Cog):
         capacity = 인원수 or (10 if game in TEAM_GAMES else 20)
         found = await self.scan_participants(interaction.guild)
         participants = found[:capacity]
-        session = MatchSession(interaction.user, game, capacity, participants)
-        await interaction.followup.send(embed=await self.list_embed(session), view=ListView(self, session))
+        session = MatchSession(interaction.guild, interaction.user.id, game, capacity,
+                               [m.id for m in participants])
+        view = ListView(self, session)
+        msg = await interaction.followup.send(embed=await self.list_embed(session), view=view,
+                                              wait=True)
+        # 메시지 ID 를 알아야 재시작 후 이 화면의 버튼을 되살릴 수 있다.
+        session.message_id = msg.id
+        session.channel_id = msg.channel.id
+        await self.persist(session)
+        if len(found) > capacity:
+            await interaction.followup.send(
+                f"⚠️ 참여 표현을 남긴 사람이 {len(found)}명인데 모집 인원이 {capacity}명이라 "
+                f"{len(found) - capacity}명이 명단에서 잘렸습니다. "
+                "필요하면 아래 참여자 추가/제외 메뉴로 조정하세요.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

@@ -7,6 +7,7 @@ import datetime
 import aiosqlite
 
 from .ui_predict import (
+    PREDICT_DB_PATH,
     local_create_bet_session, local_get_bet_session, local_update_bet_status,
     local_get_bet_session_by_message_id, local_get_bet_totals, local_get_bet_winners,
     local_get_user_all_bets, local_set_bet_close_time, local_get_expired_bets,
@@ -49,7 +50,7 @@ class PredictCog(commands.Cog):
     async def before_auto_close_loop(self):
         await self.bot.wait_until_ready()
         # predictions.db 전용 betting 테이블 초기화 및 보장
-        async with aiosqlite.connect('predictions.db') as db:
+        async with aiosqlite.connect(PREDICT_DB_PATH) as db:
             await db.execute('''CREATE TABLE IF NOT EXISTS betting_sessions
                          (topic TEXT PRIMARY KEY, option_a TEXT, option_b TEXT, status TEXT, message_id INTEGER, channel_id INTEGER, close_at REAL)''')
             await db.execute('''CREATE TABLE IF NOT EXISTS betting_records

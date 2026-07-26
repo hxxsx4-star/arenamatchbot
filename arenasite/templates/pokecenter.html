@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}포켓몬 센터{% endblock %}
+{% block m_poke %}active{% endblock %}
+{% block body %}
+
+<div class="section-title" style="font-size:20px">
+  {{ emblem('pokeA') }} 포켓몬 센터
+  <span class="muted" style="font-weight:600;font-size:14px">디스코드에서 잡은 포켓몬이 여기에 모입니다</span>
+</div>
+
+{% if not ready %}
+<div class="card">
+  <div class="empty">
+    도감이 아직 준비되지 않았습니다.<br>
+    <span class="muted">펫봇에서 <code>python scripts/seed_species.py</code> 로 도감을 시딩하면 표시됩니다.</span>
+  </div>
+</div>
+{% else %}
+
+<div class="grid g3" style="margin-bottom:22px">
+  <div class="card center">
+    <div class="stat-big">{{ summary.discovered }} <span class="muted" style="font-size:16px">/ {{ summary.species }}</span></div>
+    <div class="muted">발견한 종</div>
+  </div>
+  <div class="card center">
+    <div class="stat-big">{{ summary.caught }}</div>
+    <div class="muted">총 포획 마릿수</div>
+  </div>
+  <div class="card center">
+    <div class="stat-big">{{ summary.trainers }}</div>
+    <div class="muted">트레이너</div>
+  </div>
+</div>
+
+<div class="grid g2" style="margin-bottom:22px">
+  <div class="card rank-card">
+    <div class="section-title">🏅 트레이너 랭킹</div>
+    {% for r in ranking %}
+      <div class="rk top{{ loop.index }}"><span class="no">{{ loop.index }}</span>
+        <span class="nm">
+          {%- if uid and r.owner_id|string == uid|string -%}
+            {{ uname or '나' }} <span class="pill pill-gold" style="font-size:10px">나</span>
+          {%- else -%}
+            트레이너 #{{ (r.owner_id|string)[-4:] }}
+          {%- endif -%}
+        </span>
+        <span class="val">{{ r.total }}마리
+          <span class="muted" style="font-weight:600">({{ r.unique_count }}종{% if r.rare_count %} · 전설+ {{ r.rare_count }}{% endif %})</span>
+        </span></div>
+    {% else %}<div class="empty">아직 포획 기록이 없습니다</div>{% endfor %}
+  </div>
+
+  <div class="card">
+    <div class="section-title">✨ 최근 포획</div>
+    {% if recent %}
+    <div style="display:flex;flex-wrap:wrap;gap:10px">
+      {% for r in recent %}
+        <div class="center" style="width:74px" title="{{ r.name_ko }} · {{ r.rarity }}">
+          {% if r.sprite_url %}<img src="{{ r.sprite_url }}" alt="{{ r.name_ko }}" loading="lazy"
+            style="width:56px;height:56px;object-fit:contain">{% endif %}
+          <div style="font-size:12px;font-weight:700">{{ r.name_ko }}</div>
+          <div class="muted" style="font-size:11px">{{ r.rarity }}</div>
+        </div>
+      {% endfor %}
+    </div>
+    {% else %}<div class="empty">아직 포획 기록이 없습니다</div>{% endif %}
+  </div>
+</div>
+
+{% if uid %}
+<div class="card" style="margin-bottom:22px">
+  <div class="section-title">🎒 내 포켓몬함
+    <span class="muted" style="font-weight:600;font-size:13px">({{ my_box|length }}마리)</span>
+  </div>
+  {% if my_box %}
+  <div style="display:flex;flex-wrap:wrap;gap:10px">
+    {% for r in my_box %}
+      <div class="center" style="width:78px" title="{{ r.name_ko }} · Lv.{{ r.level }} · {{ r.rarity }}">
+        {% if r.sprite_url %}<img src="{{ r.sprite_url }}" alt="{{ r.name_ko }}" loading="lazy"
+          style="width:60px;height:60px;object-fit:contain">{% endif %}
+        <div style="font-size:12px;font-weight:700">
+          {% if r.is_partner %}⭐{% endif %}{{ r.nickname or r.name_ko }}</div>
+        <div class="muted" style="font-size:11px">Lv.{{ r.level }}</div>
+      </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">아직 잡은 포켓몬이 없습니다. 디스코드 스폰 채널에서 야생 포켓몬을 잡아보세요!</div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom:22px">
+  <div class="section-title">🛒 볼 상점
+    <span class="muted" style="font-weight:600;font-size:13px">디스코드에서 <code>/볼상점</code> 으로 구매</span>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px">
+    {% for b in balls %}
+      <div class="center" style="padding:12px;border:1px solid var(--line);border-radius:12px">
+        <img src="{{ b.sprite }}" alt="{{ b.name }}" loading="lazy"
+             style="width:48px;height:48px;object-fit:contain;image-rendering:pixelated">
+        <div style="font-weight:800;font-size:13px;margin-top:4px">{{ b.name }}</div>
+        <div class="pill" style="font-size:11px">{{ b.rate }}</div>
+        <div class="muted" style="font-size:11px;margin-top:4px">{{ b.desc }}</div>
+        <div style="font-weight:700;font-size:12px;margin-top:4px">{{ '{:,}'.format(b.price) }}P</div>
+      </div>
+    {% endfor %}
+  </div>
+  <div class="muted" style="font-size:12px;margin-top:10px">
+    <code>/볼받기</code> 로 하루 한 번 몬스터볼 10개를 무료로 받을 수 있습니다.
+  </div>
+</div>
+
+<div class="section-title" style="font-size:18px">
+  📖 전국도감
+  <span class="muted" style="font-weight:600;font-size:14px">{{ total }}종</span>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <form method="get" action="/pokecenter" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <input type="text" name="q" value="{{ q }}" placeholder="이름으로 검색 (예: 피카츄)"
+           style="flex:1;min-width:200px">
+    <select name="rarity">
+      <option value="">전체 등급</option>
+      {% for r in rarities %}
+        <option value="{{ r }}" {% if rarity == r %}selected{% endif %}>{{ r }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit">검색</button>
+    {% if q or rarity %}<a class="btn btn-ghost" href="/pokecenter">초기화</a>{% endif %}
+  </form>
+</div>
+
+{% if species %}
+<div class="card">
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px">
+    {% for s in species %}
+      <div class="center" style="padding:10px;border:1px solid var(--line);border-radius:12px;
+           {% if not s.caught %}opacity:.55{% endif %}">
+        {% if s.sprite_url %}
+          <img src="{{ s.sprite_url }}" alt="{{ s.name_ko }}" loading="lazy"
+               style="width:72px;height:72px;object-fit:contain">
+        {% endif %}
+        <div class="muted" style="font-size:11px">No.{{ '%04d' % s.id }}</div>
+        <div style="font-weight:800;font-size:13px">{{ s.name_ko }}</div>
+        <div style="font-size:11px;margin:4px 0">
+          {% for t in s.types %}<span class="pill">{{ t }}</span>{% endfor %}
+        </div>
+        <div class="muted" style="font-size:11px">
+          {{ s.rarity }} · 종족값 {{ s.bst }}
+        </div>
+        {% if s.caught %}<div class="pill pill-win" style="font-size:10px;margin-top:4px">✔ 포획됨</div>{% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  {% if pages > 1 %}
+  {% set qs = '&q=' ~ q ~ '&rarity=' ~ rarity %}
+  <div class="center" style="margin-top:16px;display:flex;gap:8px;justify-content:center;align-items:center">
+    {% if page > 0 %}
+      <a class="btn btn-ghost btn-sm" href="/pokecenter?page={{ page - 1 }}{{ qs }}">◀ 이전</a>
+    {% endif %}
+    <span class="muted">{{ page + 1 }} / {{ pages }}</span>
+    {% if page + 1 < pages %}
+      <a class="btn btn-ghost btn-sm" href="/pokecenter?page={{ page + 1 }}{{ qs }}">다음 ▶</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="card"><div class="empty">검색 결과가 없습니다</div></div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

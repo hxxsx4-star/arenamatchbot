@@ -11,6 +11,7 @@ from .ui_predict import (
     local_create_bet_session, local_get_bet_session, local_update_bet_status,
     local_get_bet_session_by_message_id, local_get_bet_totals, local_get_bet_winners,
     local_get_user_all_bets, local_set_bet_close_time, local_get_expired_bets,
+    local_get_all_bets, local_delete_bet_records,
     generate_bet_embed, BettingView
 )
 from utils.stats import add_points, format_num
@@ -97,6 +98,50 @@ class PredictCog(commands.Cog):
             print(f"Message edit failed: {e}")
 
         await interaction.response.send_message(f"✅ `{주제}` 예측의 베팅이 성공적으로 마감(버튼 비활성화)되었습니다.")
+
+    @app_commands.command(name="예측취소",
+                          description="예측을 취소하고 베팅한 포인트를 전원에게 원금 그대로 돌려줍니다. (관리자 전용)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(주제="취소할 예측의 주제")
+    async def cancel_bet(self, interaction: discord.Interaction, 주제: str):
+        session = await local_get_bet_session(주제)
+        if not session:
+            return await interaction.response.send_message("❌ 존재하지 않는 주제입니다.", ephemeral=True)
+        if session['status'] == 'finished':
+            return await interaction.response.send_message(
+                "❌ 이미 정산이 끝난 예측은 취소할 수 없습니다.", ephemeral=True)
+        if session['status'] == 'cancelled':
+            return await interaction.response.send_message("❌ 이미 취소된 예측입니다.", ephemeral=True)
+
+        await interaction.response.defer()
+
+        # 상태를 먼저 바꿔 추가 베팅을 막고, 그 다음 환불한다.
+        await local_update_bet_status(주제, 'cancelled')
+
+        bets = await local_get_all_bets(주제)
+        refunded = 0
+        for user_id, amount in bets:
+            await add_points(user_id, amount)
+            refunded += amount
+        # 환불한 기록은 지워서 두 번 돌려주는 일이 없게 한다.
+        await local_delete_bet_records(주제)
+
+        try:
+            channel = self.bot.get_channel(session['channel_id']) \
+                or await self.bot.fetch_channel(session['channel_id'])
+            msg = await channel.fetch_message(session['message_id'])
+            embed = discord.Embed(
+                title=f"🚫 [취소됨] 예측: {주제}",
+                description=f"이 예측은 취소되었습니다.\n"
+                            f"베팅한 **{len(bets)}명**에게 원금 `{format_num(refunded)}P` 를 전액 환불했습니다.",
+                color=discord.Color.dark_gray())
+            await msg.edit(embed=embed, view=None)
+        except Exception as e:
+            print(f"[예측취소] 원본 메시지 갱신 실패: {e}")
+
+        await interaction.followup.send(
+            f"✅ `{주제}` 예측을 취소하고 **{len(bets)}명**에게 "
+            f"총 `{format_num(refunded)}P` 를 환불했습니다.")
 
     @app_commands.command(name="예측결과", description="마감된 예측의 결과를 확정하고 상금을 분배합니다.")
     @app_commands.describe(메시지id="결과를 발표할 예측 메시지의 ID", 승리옵션="승리한 옵션을 선택하세요")

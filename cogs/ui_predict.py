@@ -68,6 +68,21 @@ async def local_get_bet_winners(topic, win_option):
         async with db.execute("SELECT user_id, amount FROM betting_records WHERE topic = ? AND option = ?", (topic, win_option)) as cursor:
             return await cursor.fetchall()
 
+async def local_get_all_bets(topic):
+    """해당 주제의 모든 베팅 (환불용)."""
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id, amount FROM betting_records WHERE topic = ?", (topic,)) as cursor:
+            return await cursor.fetchall()
+
+
+async def local_delete_bet_records(topic):
+    """환불 완료 후 베팅 기록을 지운다. (중복 환불 방지)"""
+    async with aiosqlite.connect(PREDICT_DB_PATH) as db:
+        await db.execute("DELETE FROM betting_records WHERE topic = ?", (topic,))
+        await db.commit()
+
+
 async def local_get_user_bet(topic, user_id):
     async with aiosqlite.connect(PREDICT_DB_PATH) as db:
         async with db.execute("SELECT option, amount FROM betting_records WHERE topic = ? AND user_id = ?", (topic, user_id)) as cursor:
@@ -160,6 +175,17 @@ class BetInputModal(discord.ui.Modal):
             return await interaction.response.send_message("❌ 1P 이상 베팅해야 합니다.", ephemeral=True)
 
         user_id = interaction.user.id
+
+        # 마감/취소된 뒤에 열어둔 모달로 제출하면 포인트만 빠져나가므로 여기서도 막는다.
+        session = await local_get_bet_session(self.topic)
+        if not session:
+            return await interaction.response.send_message(
+                "❌ 사라진 예측입니다.", ephemeral=True)
+        if session['status'] != 'active':
+            label = {"closed": "마감된", "cancelled": "취소된", "finished": "정산이 끝난"}.get(
+                session['status'], "진행 중이 아닌")
+            return await interaction.response.send_message(
+                f"❌ 이미 {label} 예측이라 베팅할 수 없습니다.", ephemeral=True)
 
         existing_bet = await local_get_user_bet(self.topic, user_id)
         if existing_bet and existing_bet[0] != self.option:

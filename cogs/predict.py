@@ -16,6 +16,34 @@ from .ui_predict import (
 )
 from utils.stats import add_points, format_num
 
+FEE_RATE = 0.05     # 시스템 수수료
+
+
+async def settle_prediction(topic: str, win_opt: str) -> dict:
+    """예측을 정산하고 배당을 지급한다.
+
+    /예측결과(수동) 와 e스포츠 자동정산이 같은 계산을 쓰도록 분리한 함수.
+    상태를 'finished' 로 바꾼 뒤 승리 옵션 베팅자에게 비율대로 분배한다.
+    """
+    totals = await local_get_bet_totals(topic)
+    total_a, total_b = totals['A'], totals['B']
+    total_pool = total_a + total_b
+    fee = int(total_pool * FEE_RATE)
+    distributable = total_pool - fee
+    win_pool = total_a if win_opt == 'A' else total_b
+
+    await local_update_bet_status(topic, 'finished')
+
+    payouts = []
+    if win_pool > 0:
+        for user_id, amount in await local_get_bet_winners(topic, win_opt):
+            reward = int(math.floor((amount / win_pool) * distributable))
+            if reward > 0:
+                await add_points(user_id, reward)
+                payouts.append((user_id, amount, reward))
+    return {"total_pool": total_pool, "fee": fee, "distributable": distributable,
+            "win_pool": win_pool, "payouts": payouts}
+
 class PredictCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -170,31 +198,18 @@ class PredictCog(commands.Cog):
         win_opt = 승리옵션.value
         win_name = session['option_a'] if win_opt == 'A' else session['option_b']
 
-        totals = await local_get_bet_totals(주제)
-        total_a, total_b = totals['A'], totals['B']
-        total_pool = total_a + total_b
+        res = await settle_prediction(주제, win_opt)
 
-        system_fee = int(total_pool * 0.05)
-        distributable_pool = total_pool - system_fee
-        win_pool = total_a if win_opt == 'A' else total_b
+        if res["win_pool"] == 0:
+            return await interaction.response.send_message(
+                f"🏆 `{주제}`의 결과는 {win_name} 입니다!\n"
+                "승리 옵션에 베팅한 유저가 없어 배당금이 시스템으로 환수되었습니다.")
 
-        await local_update_bet_status(주제, 'finished')
-
-        if win_pool == 0:
-            return await interaction.response.send_message(f"🏆 `{주제}`의 결과는 {win_name} 입니다!\n승리 옵션에 베팅한 유저가 없어 배당금이 시스템으로 환수되었습니다.")
-
-        winners = await local_get_bet_winners(주제, win_opt)
-        payout_logs = []
-
-        for user_id, amount in winners:
-            share_ratio = amount / win_pool
-            reward = int(math.floor(share_ratio * distributable_pool))
-
-            if reward > 0:
-                await add_points(user_id, reward)
-                payout_logs.append(f"<@{user_id}>: {format_num(reward)}P (원금 {format_num(amount)}P)")
-
-        result_desc = f"총 베팅 풀 `{format_num(total_pool)}P` 중 5%(`{format_num(system_fee)}P`) 수수료를 제외한 `{format_num(distributable_pool)}P`가 분배되었습니다.\n\n🎉 당첨자 목록\n"
+        payout_logs = [f"<@{uid}>: {format_num(reward)}P (원금 {format_num(amount)}P)"
+                       for uid, amount, reward in res["payouts"]]
+        result_desc = (f"총 베팅 풀 `{format_num(res['total_pool'])}P` 중 "
+                       f"5%(`{format_num(res['fee'])}P`) 수수료를 제외한 "
+                       f"`{format_num(res['distributable'])}P`가 분배되었습니다.\n\n🎉 당첨자 목록\n")
         result_desc += "\n".join(payout_logs) if payout_logs else "상금을 받은 유저가 없습니다."
 
         embed = discord.Embed(title=f"🎊 예측 결과 발표: {주제}", description=result_desc, color=discord.Color.gold())

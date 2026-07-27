@@ -37,6 +37,7 @@
       <a href="/records" class="{% block m_rec %}{% endblock %}">기록실</a>
       <a href="/ladder" class="{% block m_lad %}{% endblock %}">사다리타기</a>
       <a href="/pokecenter" class="{% block m_poke %}{% endblock %}">포켓몬 센터</a>
+      {% if is_admin %}<a href="/admin/pokemon">🛠️ 포켓몬 관리</a>{% endif %}
       {% if auction_on %}<a href="/auction/">경매</a>{% endif %}
     </nav>
     <div class="nav-right">

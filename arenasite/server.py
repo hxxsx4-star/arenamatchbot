@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from arenasite import store, riot, tiericons, champions, pokedex
+from arenasite import store, riot, tiericons, champions, pokedex, pokeadmin
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="종합게임 아레나 · 내전")
@@ -46,7 +46,9 @@ app.add_middleware(
 )
 # 항상 관리자로 인정할 디스코드 ID(안전용 fallback). 비워둬도 됨.
 ADMIN_IDS = set(filter(None, os.environ.get(
-    "ADMIN_DISCORD_IDS", "1505506970361139210,1517544497817583739"
+    "ADMIN_DISCORD_IDS",
+    "1505506970361139210,1517544497817583739,1077647513114394724,"
+    "1474783486643539978,1526223759634202676"
 ).replace(" ", "").split(",")))
 # 이 서버(길드)에서 '서버 관리' 이상 권한을 가진 사람은 누구나 사이트 관리자.
 GUILD_ID = int(os.environ.get("GUILD_ID", "1526593162645209188"))
@@ -178,6 +180,57 @@ async def betting_page(request: Request):
 @app.get("/ladder", response_class=HTMLResponse)
 async def ladder_page(request: Request):
     return templates.TemplateResponse(request, "ladder.html", _ctx(request))
+
+
+def _require_admin(request: Request):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403, detail="관리자만 접근할 수 있습니다.")
+
+
+@app.get("/admin/pokemon", response_class=HTMLResponse)
+async def pokemon_admin(request: Request):
+    """포켓몬 관리자 페이지 — 유저 아이템 관리 + 전설 소환."""
+    _require_admin(request)
+    q = (request.query_params.get("q") or "").strip()
+    return templates.TemplateResponse(request, "pokeadmin.html", _ctx(
+        request,
+        ready=pokeadmin.available(),
+        trainers=pokeadmin.list_trainers(),
+        ball_names=pokeadmin.BALL_NAMES,
+        requests=pokeadmin.recent_requests(),
+        q=q,
+        results=pokeadmin.search_species(q, only_legendary=True) if q else [],
+    ))
+
+
+@app.post("/api/admin/pokemon/item")
+async def pokemon_admin_item(request: Request):
+    """유저 아이템 개수 변경."""
+    _require_admin(request)
+    form = await request.form()
+    try:
+        uid = int(form.get("uid"))
+        amount = int(form.get("amount"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="잘못된 입력입니다.")
+    item = (form.get("item") or "").strip()
+    if not item:
+        raise HTTPException(status_code=400, detail="아이템을 지정하세요.")
+    final = pokeadmin.set_item(uid, item, amount)
+    return JSONResponse({"ok": True, "uid": uid, "item": item, "amount": final})
+
+
+@app.post("/api/admin/pokemon/summon")
+async def pokemon_admin_summon(request: Request):
+    """전설/환상 소환을 봇에 요청."""
+    _require_admin(request)
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    actor = f"{request.session.get('uname', '?')}({request.session.get('uid', '?')})"
+    ok = pokeadmin.request_summon(name, actor)
+    return JSONResponse({"ok": ok,
+                         "message": ("소환 요청을 보냈습니다. 곧 스폰 채널에 등장합니다."
+                                     if ok else "요청에 실패했습니다.")})
 
 
 @app.get("/pokecenter", response_class=HTMLResponse)

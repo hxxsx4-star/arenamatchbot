@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}포켓몬 관리{% endblock %}
+{% block m_poke %}active{% endblock %}
+{% block body %}
+
+<div class="section-title" style="font-size:20px">
+  {{ emblem('padmA') }} 포켓몬 관리
+  <span class="muted" style="font-weight:600;font-size:14px">관리자 전용</span>
+</div>
+
+{% if not ready %}
+<div class="card"><div class="empty">포켓몬 DB를 찾을 수 없습니다.</div></div>
+{% else %}
+
+<div class="card" style="margin-bottom:22px">
+  <div class="section-title">🌟 전설 · 환상 소환</div>
+  <p class="muted" style="font-size:13px;margin:0 0 10px">
+    스폰 채널에 즉시 등장시킵니다. 이름을 비우면 전설·환상 중 무작위로 나옵니다.
+  </p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <input type="text" id="summonName" placeholder="포켓몬 이름 (비우면 무작위)"
+           style="flex:1;min-width:220px" list="legendList">
+    <datalist id="legendList">
+      {% for s in results %}<option value="{{ s.name_ko }}">{% endfor %}
+    </datalist>
+    <button class="btn" onclick="doSummon()">소환</button>
+  </div>
+  <div id="summonMsg" class="muted" style="font-size:13px;margin-top:8px"></div>
+
+  <form method="get" action="/admin/pokemon" style="display:flex;gap:8px;margin-top:12px">
+    <input type="text" name="q" value="{{ q }}" placeholder="전설·환상 이름 검색">
+    <button class="btn btn-ghost" type="submit">검색</button>
+  </form>
+  {% if results %}
+  <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px">
+    {% for s in results %}
+      <div class="center" style="width:78px;cursor:pointer"
+           onclick="document.getElementById('summonName').value='{{ s.name_ko }}'">
+        {% if s.sprite_url %}<img src="{{ s.sprite_url }}" alt="" loading="lazy"
+          style="width:56px;height:56px;object-fit:contain">{% endif %}
+        <div style="font-size:12px;font-weight:700">{{ s.name_ko }}</div>
+        <div class="muted" style="font-size:11px">{{ s.rarity }}</div>
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if requests %}
+  <div class="section-title" style="margin-top:16px;font-size:14px">최근 소환 요청</div>
+  <table>
+    <thead><tr><th>요청자</th><th>대상</th><th>결과</th></tr></thead>
+    <tbody>
+      {% for r in requests %}
+      <tr>
+        <td>{{ r.actor }}</td>
+        <td>{{ r.payload or '(무작위)' }}</td>
+        <td>{% if r.done %}<span class="pill pill-win">{{ r.result or '완료' }}</span>
+            {% else %}<span class="pill">처리 중…</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<div class="section-title" style="font-size:18px">
+  🎒 트레이너 아이템 관리
+  <span class="muted" style="font-weight:600;font-size:14px">{{ trainers|length }}명</span>
+</div>
+
+{% if not trainers %}
+<div class="card"><div class="empty">아직 트레이너가 없습니다.</div></div>
+{% else %}
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>트레이너</th><th>보유</th>
+        {% for b in ball_names %}<th class="center">{{ b }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in trainers %}
+      <tr>
+        <td>
+          <b>#{{ (t.uid|string)[-4:] }}</b>
+          <div class="muted" style="font-size:11px">{{ t.uid }}</div>
+        </td>
+        <td>
+          {{ t.mons }}마리
+          <span class="muted" style="font-size:11px">(파티 {{ t.party }})</span>
+        </td>
+        {% for b in ball_names %}
+        <td class="center">
+          {# t.items 는 dict 의 items() 메서드로 잡히므로 첨자로 접근한다 #}
+          <input type="number" min="0" max="9999" value="{{ t['items'].get(b, 0) }}"
+                 id="i-{{ t.uid }}-{{ loop.index }}"
+                 style="width:78px;text-align:center"
+                 onchange="saveItem('{{ t.uid }}','{{ b }}', this)">
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="muted" style="font-size:12px;margin-top:10px">
+    숫자를 바꾸면 즉시 저장됩니다. 0 으로 두면 아이템이 사라집니다.
+  </div>
+  <div id="itemMsg" class="muted" style="font-size:13px;margin-top:6px"></div>
+</div>
+{% endif %}
+
+{% endif %}
+
+<script>
+async function doSummon(){
+  const name = document.getElementById('summonName').value.trim();
+  const msg = document.getElementById('summonMsg');
+  msg.textContent = '요청 중…';
+  const fd = new FormData(); fd.append('name', name);
+  try{
+    const r = await fetch('/api/admin/pokemon/summon', {method:'POST', body: fd});
+    const d = await r.json();
+    msg.textContent = d.message || (d.ok ? '요청 완료' : '실패');
+    if(d.ok) setTimeout(()=>location.reload(), 2500);
+  }catch(e){ msg.textContent = '오류: ' + e; }
+}
+async function saveItem(uid, item, el){
+  const msg = document.getElementById('itemMsg');
+  const fd = new FormData();
+  fd.append('uid', uid); fd.append('item', item); fd.append('amount', el.value);
+  try{
+    const r = await fetch('/api/admin/pokemon/item', {method:'POST', body: fd});
+    const d = await r.json();
+    msg.textContent = d.ok ? `저장됨 — ${item} ${d.amount}개` : '저장 실패';
+  }catch(e){ msg.textContent = '오류: ' + e; }
+}
+</script>
+{% endblock %}

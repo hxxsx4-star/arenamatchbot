@@ -1,8 +1,10 @@
+import io
 import os
 
 import discord
 import time
 import aiosqlite
+from PIL import Image, ImageDraw, ImageFont
 from utils.stats import spend_points, add_points, get_points, format_num
 
 # 승부예측 DB 경로.
@@ -111,22 +113,103 @@ async def local_get_expired_bets():
         async with db.execute("SELECT * FROM betting_sessions WHERE status = 'active' AND close_at IS NOT NULL AND close_at <= ?", (now,)) as cursor:
             return await cursor.fetchall()
 
-def generate_progress_bar(total_a, total_b):
+# 베팅 비율 게이지 이미지 (카테고리 색상: 옵션 A=레드, 옵션 B=블루 — 버튼 색과 동일)
+_GAUGE_W, _GAUGE_H = 700, 76
+_BAR_H = 30
+_GAP = 3
+_RED = (230, 103, 103, 255)
+_BLUE = (57, 135, 229, 255)
+_NEUTRAL = (255, 255, 255, 46)
+_GAUGE_FILENAME = "gauge.png"
+
+
+def _gauge_font(size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype("font_ui.ttf", size)
+
+
+def generate_gauge_image(total_a: int, total_b: int) -> discord.File:
+    """옵션 A/B 베팅 비율을 보여주는 둥근 막대 이미지를 만든다."""
+    W, H, BAR_H = _GAUGE_W, _GAUGE_H, _BAR_H
+    y0 = (H - BAR_H) // 2
+    y1 = y0 + BAR_H
+    radius = BAR_H // 2
+
+    mask = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, y0, W - 1, y1], radius=radius, fill=255)
+
+    bar_fill = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    bdraw = ImageDraw.Draw(bar_fill)
+    labels = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ldraw = ImageDraw.Draw(labels)
+    font = _gauge_font(18)
+    small_font = _gauge_font(14)
+
     total = total_a + total_b
     if total == 0:
-        return "⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛"
-    ratio_a = total_a / total
-    blocks_a = round(ratio_a * 10)
-    blocks_b = 10 - blocks_a
-    return ("🟥" * blocks_a) + ("🟦" * blocks_b)
+        bdraw.rounded_rectangle([0, y0, W - 1, y1], radius=radius, fill=_NEUTRAL)
+        msg = "아직 베팅이 없어요"
+        bbox = ldraw.textbbox((0, 0), msg, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        ldraw.text(((W - tw) / 2, y0 + (BAR_H - th) / 2 - bbox[1]), msg, font=font, fill=(255, 255, 255, 200))
+    else:
+        pct_a = round(total_a / total * 100)
+        pct_b = 100 - pct_a
+        min_w = BAR_H
+
+        if pct_a <= 0:
+            width_a = 0
+        elif pct_b <= 0:
+            width_a = W
+        else:
+            width_a = max(round(W * pct_a / 100), min_w)
+            width_a = min(width_a, W - min_w - _GAP)
+
+        if pct_a > 0:
+            seg_end = max(0, width_a - (_GAP if pct_b > 0 else 0))
+            bdraw.rounded_rectangle([0, y0, max(seg_end, 1), y1], radius=radius, fill=_RED)
+        if pct_b > 0:
+            seg_start = width_a + (_GAP if pct_a > 0 else 0)
+            bdraw.rounded_rectangle([min(seg_start, W - 2), y0, W - 1, y1], radius=radius, fill=_BLUE)
+
+        def label(pct, seg_left, seg_right):
+            if pct <= 0:
+                return
+            txt = f"{pct}%"
+            cx = (seg_left + seg_right) / 2
+            seg_w = seg_right - seg_left
+            bbox = ldraw.textbbox((0, 0), txt, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            if tw + 16 <= seg_w:
+                ty = y0 + (BAR_H - th) / 2 - bbox[1]
+                ldraw.text((cx - tw / 2, ty), txt, font=font, fill=(255, 255, 255, 235))
+            else:
+                bbox_s = ldraw.textbbox((0, 0), txt, font=small_font)
+                tw_s, th_s = bbox_s[2] - bbox_s[0], bbox_s[3] - bbox_s[1]
+                ty = y0 - th_s - 6 - bbox_s[1]
+                ldraw.text((cx - tw_s / 2, ty), txt, font=small_font, fill=(225, 225, 225, 235))
+
+        a_right = width_a if pct_b > 0 else W
+        label(pct_a, 0, a_right if pct_a > 0 else 0)
+        label(pct_b, width_a, W)
+
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    bar_masked = Image.composite(bar_fill, canvas, mask)
+    final = Image.alpha_composite(bar_masked, labels)
+
+    buf = io.BytesIO()
+    final.save(buf, format="PNG")
+    buf.seek(0)
+    return discord.File(buf, filename=_GAUGE_FILENAME)
+
 
 async def generate_bet_embed(topic, opt_a, opt_b, status="active"):
+    """(embed, file) 튜플을 반환한다. file 은 send/edit 시 함께 첨부해야 게이지 이미지가 보인다."""
     totals = await local_get_bet_totals(topic)
     total_a = totals['A']
     total_b = totals['B']
     total_pool = total_a + total_b
 
-    gauge = generate_progress_bar(total_a, total_b)
+    gauge_file = generate_gauge_image(total_a, total_b)
 
     dist_pool = total_pool * 0.95
     odds_a = round(dist_pool / total_a, 2) if total_a > 0 else 1.00
@@ -145,9 +228,10 @@ async def generate_bet_embed(topic, opt_a, opt_b, status="active"):
     embed.add_field(name=f"🟥 옵션 A: {opt_a}", value=f"📊 배당률: {odds_a}배\n(누적: {format_num(total_a)}P)", inline=True)
     embed.add_field(name=f"🟦 옵션 B: {opt_b}", value=f"📊 배당률: {odds_b}배\n(누적: {format_num(total_b)}P)", inline=True)
 
-    embed.add_field(name="현재 베팅 비율", value=f"{gauge}\n💰 총 상금 풀: {format_num(total_pool)}P (수수료 5% 제외 후 분배)", inline=False)
+    embed.add_field(name="현재 베팅 비율", value=f"💰 총 상금 풀: {format_num(total_pool)}P (수수료 5% 제외 후 분배)", inline=False)
+    embed.set_image(url=f"attachment://{_GAUGE_FILENAME}")
 
-    return embed
+    return embed, gauge_file
 
 class BetInputModal(discord.ui.Modal):
     def __init__(self, topic: str, option: str, opt_name: str, view: discord.ui.View):
@@ -204,9 +288,10 @@ class BetInputModal(discord.ui.Modal):
                 "❌ 이미 반대쪽 옵션에 베팅되어 있습니다. 포인트는 돌려드렸습니다.", ephemeral=True)
 
         session = await local_get_bet_session(self.topic)
-        new_embed = await generate_bet_embed(self.topic, session['option_a'], session['option_b'], session['status'])
+        new_embed, gauge_file = await generate_bet_embed(
+            self.topic, session['option_a'], session['option_b'], session['status'])
 
-        await interaction.message.edit(embed=new_embed, view=self.view)
+        await interaction.message.edit(embed=new_embed, view=self.view, attachments=[gauge_file])
         await interaction.response.send_message(f"✅ 성공적으로 `{format_num(bet_amount)}P`를 베팅했습니다!", ephemeral=True)
 
 class BettingView(discord.ui.View):

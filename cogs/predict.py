@@ -68,9 +68,9 @@ class PredictCog(commands.Cog):
                 msg = await channel.fetch_message(bet['message_id'])
 
                 view = BettingView(topic, bet['option_a'], bet['option_b'], disabled=True)
-                embed, gauge_file = await generate_bet_embed(topic, bet['option_a'], bet['option_b'], "closed")
+                embed, gauge_files = await generate_bet_embed(topic, bet['option_a'], bet['option_b'], "closed")
 
-                await msg.edit(embed=embed, view=view, attachments=[gauge_file])
+                await msg.edit(embed=embed, view=view, attachments=gauge_files)
                 await channel.send(f"⏰ 예약된 시간이 되어 [{topic}] 예측이 자동으로 마감되었습니다!")
             except Exception as e:
                 print(f"🚨 [자동 마감 에러] {topic} 처리 중 문제 발생: {e}")
@@ -93,10 +93,10 @@ class PredictCog(commands.Cog):
         if existing:
             return await interaction.response.send_message("❌ 이미 동일한 이름의 주제가 존재합니다.", ephemeral=True)
 
-        embed, gauge_file = await generate_bet_embed(주제, 옵션a, 옵션b, "active")
+        embed, gauge_files = await generate_bet_embed(주제, 옵션a, 옵션b, "active")
         view = BettingView(주제, 옵션a, 옵션b)
 
-        await interaction.response.send_message(embed=embed, view=view, file=gauge_file)
+        await interaction.response.send_message(embed=embed, view=view, files=gauge_files)
         msg = await interaction.original_response()
 
         await local_create_bet_session(주제, 옵션a, 옵션b, msg.id, interaction.channel.id)
@@ -119,9 +119,9 @@ class PredictCog(commands.Cog):
             msg = await channel.fetch_message(session['message_id'])
 
             view = BettingView(주제, session['option_a'], session['option_b'], disabled=True)
-            embed, gauge_file = await generate_bet_embed(주제, session['option_a'], session['option_b'], "closed")
+            embed, gauge_files = await generate_bet_embed(주제, session['option_a'], session['option_b'], "closed")
 
-            await msg.edit(embed=embed, view=view, attachments=[gauge_file])
+            await msg.edit(embed=embed, view=view, attachments=gauge_files)
         except Exception as e:
             print(f"Message edit failed: {e}")
 

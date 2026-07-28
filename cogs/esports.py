@@ -168,10 +168,10 @@ class EsportsCog(commands.Cog):
                 continue
 
             try:
-                embed, gauge_file = await generate_bet_embed(topic, a["name"], b["name"], "active")
+                embed, gauge_files = await generate_bet_embed(topic, a["name"], b["name"], "active")
                 embed.set_footer(text=f"{league} · 경기 시작 시각에 자동 마감됩니다")
                 view = BettingView(topic, a["name"], b["name"])
-                msg = await channel.send(embed=embed, view=view, file=gauge_file)
+                msg = await channel.send(embed=embed, view=view, files=gauge_files)
 
                 await local_create_bet_session(topic, a["name"], b["name"], msg.id, channel.id)
                 # 경기 시작 시각에 기존 마감 스케줄러가 자동으로 닫아준다.
@@ -248,9 +248,9 @@ class EsportsCog(commands.Cog):
             await channel.send(embed=embed)
             # 원본 예측 메시지도 정리
             msg = await channel.fetch_message(session["message_id"])
-            closed, gauge_file = await generate_bet_embed(row["topic"], session["option_a"],
-                                                          session["option_b"], "closed")
-            await msg.edit(embed=closed, view=None, attachments=[gauge_file])
+            closed, gauge_files = await generate_bet_embed(row["topic"], session["option_a"],
+                                                            session["option_b"], "closed")
+            await msg.edit(embed=closed, view=None, attachments=gauge_files)
         except Exception as e:
             print(f"🚨 [e스포츠] 결과 안내 실패: {e}")
 

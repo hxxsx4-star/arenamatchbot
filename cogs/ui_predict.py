@@ -121,6 +121,12 @@ _RED = (230, 103, 103, 255)
 _BLUE = (57, 135, 229, 255)
 _NEUTRAL = (255, 255, 255, 46)
 _GAUGE_FILENAME = "gauge.png"
+_THUMB_PATH = "predict_thumb.png"
+_THUMB_FILENAME = "predict_thumb.png"
+
+
+def _thumb_file() -> discord.File:
+    return discord.File(_THUMB_PATH, filename=_THUMB_FILENAME)
 
 
 def _gauge_font(size: int) -> ImageFont.FreeTypeFont:
@@ -203,7 +209,7 @@ def generate_gauge_image(total_a: int, total_b: int) -> discord.File:
 
 
 async def generate_bet_embed(topic, opt_a, opt_b, status="active"):
-    """(embed, file) 튜플을 반환한다. file 은 send/edit 시 함께 첨부해야 게이지 이미지가 보인다."""
+    """(embed, files) 튜플을 반환한다. files 를 send/edit 시 함께 첨부해야 게이지·썸네일이 보인다."""
     totals = await local_get_bet_totals(topic)
     total_a = totals['A']
     total_b = totals['B']
@@ -230,8 +236,9 @@ async def generate_bet_embed(topic, opt_a, opt_b, status="active"):
 
     embed.add_field(name="현재 베팅 비율", value=f"💰 총 상금 풀: {format_num(total_pool)}P (수수료 5% 제외 후 분배)", inline=False)
     embed.set_image(url=f"attachment://{_GAUGE_FILENAME}")
+    embed.set_thumbnail(url=f"attachment://{_THUMB_FILENAME}")
 
-    return embed, gauge_file
+    return embed, [gauge_file, _thumb_file()]
 
 class BetInputModal(discord.ui.Modal):
     def __init__(self, topic: str, option: str, opt_name: str, view: discord.ui.View):
@@ -288,10 +295,10 @@ class BetInputModal(discord.ui.Modal):
                 "❌ 이미 반대쪽 옵션에 베팅되어 있습니다. 포인트는 돌려드렸습니다.", ephemeral=True)
 
         session = await local_get_bet_session(self.topic)
-        new_embed, gauge_file = await generate_bet_embed(
+        new_embed, gauge_files = await generate_bet_embed(
             self.topic, session['option_a'], session['option_b'], session['status'])
 
-        await interaction.message.edit(embed=new_embed, view=self.view, attachments=[gauge_file])
+        await interaction.message.edit(embed=new_embed, view=self.view, attachments=gauge_files)
         await interaction.response.send_message(f"✅ 성공적으로 `{format_num(bet_amount)}P`를 베팅했습니다!", ephemeral=True)
 
 class BettingView(discord.ui.View):

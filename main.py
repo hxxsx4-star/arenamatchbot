@@ -40,6 +40,7 @@ class MatchBot(commands.Bot):
             "cogs.sync",       # 슬래시 커맨드 수동 동기화
             "cogs.registration",  # 닉네임/라인 등록
             "cogs.match",      # 내전 (내전 로그 → 공유 큐)
+            "cogs.rules_gate", # 내전 규칙 안내 + ✅ 반응 시 내전 역할 지급
             "cogs.auction",    # 경매 (경매 사이트는 추후 확장)
             "cogs.predict",    # 승부예측
             "cogs.esports",    # e스포츠(LCK/MSI/Worlds) 자동 예측

@@ -6,6 +6,7 @@
 - `cogs/auction.py` : 경매 (경매 사이트는 추후 확장 예정)
 - `cogs/predict.py`, `cogs/ui_predict.py` : 승부예측
 - `cogs/sync.py`    : 슬래시 커맨드 수동 동기화
+- `cogs/rules_gate.py` : 내전 규칙 안내 임베드 + ✅ 반응 시 내전 역할 자동 지급
 
 ## 실행
 ```

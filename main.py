@@ -44,6 +44,7 @@ class MatchBot(commands.Bot):
             "cogs.auction",    # 경매 (경매 사이트는 추후 확장)
             "cogs.predict",    # 승부예측
             "cogs.esports",    # e스포츠(LCK/MSI/Worlds) 자동 예측
+            "cogs.valorant_esports",  # e스포츠(VCT 아메리카스/EMEA/퍼시픽/챔피언스) 자동 예측
             "cogs.stats_lookup",  # 내전 전적 조회 (/내전전적)
         ]
         for ext in extensions:

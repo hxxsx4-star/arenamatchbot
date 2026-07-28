@@ -5,6 +5,8 @@
 - `cogs/match.py`   : 내전 모집/진행 (내전 시작 로그 → 공유 큐 → 로그봇)
 - `cogs/auction.py` : 경매 (경매 사이트는 추후 확장 예정)
 - `cogs/predict.py`, `cogs/ui_predict.py` : 승부예측
+- `cogs/esports.py` : e스포츠(LCK/MSI/Worlds) 자동 예측 게시+정산
+- `cogs/valorant_esports.py` : e스포츠(VCT) 자동 예측 게시 (비공식 API, 정산은 수동)
 - `cogs/sync.py`    : 슬래시 커맨드 수동 동기화
 - `cogs/rules_gate.py` : 내전 규칙 안내 임베드 + ✅ 반응 시 내전 역할 자동 지급
 

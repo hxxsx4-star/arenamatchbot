@@ -6,9 +6,12 @@
 
 라이엇이 발로란트는 롤과 달리 공식 일정 API를 공개하지 않는다. 그래서 커뮤니티가
 vlr.gg(팬사이트)를 스크래핑해 만든 비공식 API(vlr-api.vercel.app)를 쓴다.
-개인이 운영하는 무료 API라 롤 공식 API보다 안정성이 낮을 수 있고, 팀 로고
-데이터가 없어 예측 임베드는 기본 VS 패널로 표시된다. 실패해도 예측 기능
-자체는 멀쩡하고 자동 게시만 멈춘다.
+개인이 운영하는 무료 API라 롤 공식 API보다 안정성이 낮을 수 있다.
+
+일정(upcoming_extended)에는 팀 로고가 없지만, 같은 API의 검색(v2/search)
+엔드포인트에 팀 이름을 넣으면 로고 URL을 따로 찾을 수 있어 그걸로 배너를
+채운다. 검색이 실패하거나 팀을 못 찾으면 기본 VS 패널로 조용히 대체된다.
+실패해도 예측 기능 자체는 멀쩡하고 자동 게시만 멈춘다.
 
 대상 대회: VCT 아메리카스/EMEA/퍼시픽 정규 시즌 + 챔피언스. (Game Changers,
 VCL 등 하위 리그와 China 리그는 대상 아님 — 필요하면 _is_target_event 만
@@ -53,6 +56,33 @@ def _is_target_event(event_name: str) -> bool:
     if _REGION_RE.match(event_name or ""):
         return True
     return "champions" in (event_name or "").lower()
+
+
+_PLACEHOLDER_IMG = "vlr/tmp/vlr.png"   # 로고 없는 팀에 붙는 vlr.gg 기본 이미지 — 못 찾은 걸로 취급
+
+
+async def _search_team_logo(session: aiohttp.ClientSession, team_name: str) -> str | None:
+    """vlr.gg 팀 검색에서 이름이 가장 잘 맞는 팀의 로고 URL을 찾는다. 실패/미발견 시 None."""
+    try:
+        async with session.get(f"{API_BASE}/v2/search", params={"q": team_name},
+                               timeout=aiohttp.ClientTimeout(total=8)) as r:
+            if r.status != 200:
+                return None
+            data = await r.json()
+    except Exception as e:
+        print(f"🚨 [발로e스포츠] 팀 로고 검색 실패 ({team_name}): {e}")
+        return None
+
+    teams = (((data.get("data") or {}).get("segments") or {}).get("results") or {}).get("teams") or []
+    if not teams:
+        return None
+
+    exact = [t for t in teams if t.get("name", "").strip().lower() == team_name.strip().lower()]
+    pick = (exact or teams)[0]
+    img = pick.get("img")
+    if not img or _PLACEHOLDER_IMG in img:
+        return None
+    return img
 
 
 async def init_valorant_db():
@@ -119,38 +149,44 @@ class ValorantEsportsCog(commands.Cog):
             return 0
 
         posted = 0
-        for m in matches:
-            team1, team2 = m.get("team1"), m.get("team2")
-            if not team1 or not team2 or "TBD" in (team1.upper(), team2.upper()):
-                continue
-            match_id = (m.get("match_page") or "").lstrip("/")
-            if not match_id or await is_posted(match_id):
-                continue
-            try:
-                start = _parse_ts(m["unix_timestamp"])
-            except Exception:
-                continue
-            if start - now > POST_BEFORE_SEC or start <= now:
-                continue
+        async with aiohttp.ClientSession() as logo_session:
+            for m in matches:
+                team1, team2 = m.get("team1"), m.get("team2")
+                if not team1 or not team2 or "TBD" in (team1.upper(), team2.upper()):
+                    continue
+                match_id = (m.get("match_page") or "").lstrip("/")
+                if not match_id or await is_posted(match_id):
+                    continue
+                try:
+                    start = _parse_ts(m["unix_timestamp"])
+                except Exception:
+                    continue
+                if start - now > POST_BEFORE_SEC or start <= now:
+                    continue
 
-            label = _short_label(m.get("match_event", ""))
-            topic = _topic_for(label, team1, team2, start)
-            if await local_get_bet_session(topic):
-                await mark_posted(match_id)
-                continue
+                label = _short_label(m.get("match_event", ""))
+                topic = _topic_for(label, team1, team2, start)
+                if await local_get_bet_session(topic):
+                    await mark_posted(match_id)
+                    continue
 
-            try:
-                embed, files = await generate_bet_embed(topic, team1, team2, "active")
-                embed.set_footer(text=f"{m.get('match_event','VCT')} · 경기 시작 시각에 자동 마감됩니다")
-                view = BettingView(topic, team1, team2)
-                msg = await channel.send(embed=embed, view=view, files=files)
+                try:
+                    logo_a = await _search_team_logo(logo_session, team1)
+                    logo_b = await _search_team_logo(logo_session, team2)
 
-                await local_create_bet_session(topic, team1, team2, msg.id, channel.id)
-                await local_set_bet_close_time(topic, start)
-                await mark_posted(match_id)
-                posted += 1
-            except Exception as e:
-                print(f"🚨 [발로e스포츠] 게시 실패 {topic}: {e}")
+                    embed, files = await generate_bet_embed(
+                        topic, team1, team2, "active", logo_a=logo_a, logo_b=logo_b)
+                    embed.set_footer(text=f"{m.get('match_event','VCT')} · 경기 시작 시각에 자동 마감됩니다")
+                    view = BettingView(topic, team1, team2)
+                    msg = await channel.send(embed=embed, view=view, files=files)
+
+                    await local_create_bet_session(topic, team1, team2, msg.id, channel.id,
+                                                   logo_a=logo_a, logo_b=logo_b)
+                    await local_set_bet_close_time(topic, start)
+                    await mark_posted(match_id)
+                    posted += 1
+                except Exception as e:
+                    print(f"🚨 [발로e스포츠] 게시 실패 {topic}: {e}")
         return posted
 
     @tasks.loop(minutes=CHECK_INTERVAL_MIN)

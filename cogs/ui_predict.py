@@ -117,25 +117,18 @@ async def local_get_expired_bets():
         async with db.execute("SELECT * FROM betting_sessions WHERE status = 'active' AND close_at IS NOT NULL AND close_at <= ?", (now,)) as cursor:
             return await cursor.fetchall()
 
-# 베팅 비율 게이지 이미지 (카테고리 색상: 옵션 A=레드, 옵션 B=블루 — 버튼 색과 동일)
-_GAUGE_W, _GAUGE_H = 700, 76
+# 예측 배너 이미지 (카테고리 색상: 옵션 A=레드, 옵션 B=블루 — 버튼 색과 동일)
+# 위: 팀 로고(또는 기본 VS 패널) · 아래: 베팅 비율 게이지. 하나로 합쳐서 embed 이미지로 크게 띄운다.
+_BANNER_W = 700
+_TOP_H = 200
+_GAUGE_H = 76
+_V_GAP = 14
 _BAR_H = 30
 _GAP = 3
 _RED = (230, 103, 103, 255)
 _BLUE = (57, 135, 229, 255)
 _NEUTRAL = (255, 255, 255, 46)
-_GAUGE_FILENAME = "gauge.png"
-_THUMB_PATH = "predict_thumb.png"
-_THUMB_FILENAME = "predict_thumb.png"
-
-
-def _thumb_file() -> discord.File:
-    return discord.File(_THUMB_PATH, filename=_THUMB_FILENAME)
-
-
-# 팀 로고 썸네일 (e스포츠 자동생성 예측 전용 — 팀 이미지 URL이 있을 때만 시도)
-_TEAM_THUMB_FILENAME = "team_thumb.png"
-_TEAM_THUMB_W, _TEAM_THUMB_H = 256, 256
+_BANNER_FILENAME = "predict_banner.png"
 
 
 async def _fetch_logo(session: aiohttp.ClientSession, url: str) -> Image.Image:
@@ -145,7 +138,7 @@ async def _fetch_logo(session: aiohttp.ClientSession, url: str) -> Image.Image:
     return Image.open(io.BytesIO(data)).convert("RGBA")
 
 
-def _fit_center(logo: Image.Image, box_w: int, box_h: int, pad: int = 18) -> Image.Image:
+def _fit_center(logo: Image.Image, box_w: int, box_h: int, pad: int = 24) -> Image.Image:
     aw, ah = box_w - pad * 2, box_h - pad * 2
     lw, lh = logo.size
     scale = min(aw / lw, ah / lh)
@@ -156,58 +149,66 @@ def _fit_center(logo: Image.Image, box_w: int, box_h: int, pad: int = 18) -> Ima
     return out
 
 
-async def build_team_thumb(logo_a_url: str, logo_b_url: str) -> discord.File | None:
-    """양쪽 팀 로고를 좌우로 합쳐 VS 뱃지를 얹은 썸네일을 만든다. 실패하면 None."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            logo_a, logo_b = await asyncio.gather(
-                _fetch_logo(session, logo_a_url), _fetch_logo(session, logo_b_url))
-    except Exception as e:
-        print(f"🚨 [승부예측] 팀 로고 다운로드 실패: {e}")
-        return None
-
-    W, H = _TEAM_THUMB_W, _TEAM_THUMB_H
-    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    left_bg = Image.new("RGBA", (W // 2, H), (*_RED[:3], 40))
-    right_bg = Image.new("RGBA", (W // 2, H), (*_BLUE[:3], 40))
-    canvas.paste(left_bg, (0, 0), left_bg)
-    canvas.paste(right_bg, (W // 2, 0), right_bg)
-    canvas.alpha_composite(_fit_center(logo_a, W // 2, H), (0, 0))
-    canvas.alpha_composite(_fit_center(logo_b, W // 2, H), (W // 2, 0))
-
-    ImageDraw.Draw(canvas).line([(W // 2, 0), (W // 2, H)], fill=(255, 255, 255, 160), width=3)
-
-    badge_r = 34
-    cx, cy = W // 2, H // 2
-    badge = Image.new("RGBA", (badge_r * 2, badge_r * 2), (0, 0, 0, 0))
+def _vs_badge(radius: int, font_size: int) -> Image.Image:
+    badge = Image.new("RGBA", (radius * 2, radius * 2), (0, 0, 0, 0))
     bdraw = ImageDraw.Draw(badge)
-    bdraw.ellipse([0, 0, badge_r * 2, badge_r * 2], fill=(30, 30, 34, 235),
-                 outline=(255, 255, 255, 235), width=4)
-    font = ImageFont.truetype("font.ttf", 30)
+    bdraw.ellipse([0, 0, radius * 2, radius * 2], fill=(30, 30, 34, 235),
+                 outline=(255, 255, 255, 235), width=5)
+    font = ImageFont.truetype("font.ttf", font_size)
     txt = "VS"
     bbox = bdraw.textbbox((0, 0), txt, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    bdraw.text((badge_r - tw / 2, badge_r - th / 2 - bbox[1]), txt, font=font, fill=(255, 255, 255, 255))
-    canvas.alpha_composite(badge, (cx - badge_r, cy - badge_r))
+    bdraw.text((radius - tw / 2, radius - th / 2 - bbox[1]), txt, font=font, fill=(255, 255, 255, 255))
+    return badge
+
+
+async def _render_top_panel(logo_a_url: str | None, logo_b_url: str | None) -> Image.Image:
+    """위쪽 패널(가로 전체 폭): 팀 로고 두 개를 크게 좌우로 배치하거나, 없으면 기본 레드/블루 VS 패널."""
+    W, H = _BANNER_W, _TOP_H
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+    logos_ok = False
+    if logo_a_url and logo_b_url:
+        try:
+            async with aiohttp.ClientSession() as session:
+                logo_a, logo_b = await asyncio.gather(
+                    _fetch_logo(session, logo_a_url), _fetch_logo(session, logo_b_url))
+            left_bg = Image.new("RGBA", (W // 2, H), (*_RED[:3], 40))
+            right_bg = Image.new("RGBA", (W // 2, H), (*_BLUE[:3], 40))
+            canvas.paste(left_bg, (0, 0), left_bg)
+            canvas.paste(right_bg, (W // 2, 0), right_bg)
+            canvas.alpha_composite(_fit_center(logo_a, W // 2, H), (0, 0))
+            canvas.alpha_composite(_fit_center(logo_b, W // 2, H), (W // 2, 0))
+            logos_ok = True
+        except Exception as e:
+            print(f"🚨 [승부예측] 팀 로고 다운로드 실패: {e}")
+
+    if not logos_ok:
+        left_bg = Image.new("RGBA", (W // 2, H), _RED)
+        right_bg = Image.new("RGBA", (W // 2, H), _BLUE)
+        canvas.paste(left_bg, (0, 0))
+        canvas.paste(right_bg, (W // 2, 0))
+
+    ImageDraw.Draw(canvas).line([(W // 2, 0), (W // 2, H)], fill=(255, 255, 255, 160), width=3)
+
+    badge_r = 46
+    badge = _vs_badge(badge_r, 40)
+    canvas.alpha_composite(badge, (W // 2 - badge_r, H // 2 - badge_r))
 
     mask = Image.new("L", (W, H), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, W - 1, H - 1], radius=24, fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, W - 1, H - 1], radius=28, fill=255)
     final = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     final.paste(canvas, (0, 0), mask)
-
-    buf = io.BytesIO()
-    final.save(buf, format="PNG")
-    buf.seek(0)
-    return discord.File(buf, filename=_TEAM_THUMB_FILENAME)
+    return final
 
 
 def _gauge_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype("font_ui.ttf", size)
 
 
-def generate_gauge_image(total_a: int, total_b: int) -> discord.File:
+def _render_gauge_panel(total_a: int, total_b: int) -> Image.Image:
     """옵션 A/B 베팅 비율을 보여주는 둥근 막대 이미지를 만든다."""
-    W, H, BAR_H = _GAUGE_W, _GAUGE_H, _BAR_H
+    W, H, BAR_H = _BANNER_W, _GAUGE_H, _BAR_H
     y0 = (H - BAR_H) // 2
     y1 = y0 + BAR_H
     radius = BAR_H // 2
@@ -272,26 +273,39 @@ def generate_gauge_image(total_a: int, total_b: int) -> discord.File:
 
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     bar_masked = Image.composite(bar_fill, canvas, mask)
-    final = Image.alpha_composite(bar_masked, labels)
+    return Image.alpha_composite(bar_masked, labels)
+
+
+async def build_predict_banner(total_a: int, total_b: int, logo_a: str | None = None,
+                               logo_b: str | None = None) -> discord.File:
+    """팀 로고(또는 기본 VS 패널) + 베팅 비율 게이지를 세로로 합친 배너 이미지 하나를 만든다."""
+    top = await _render_top_panel(logo_a, logo_b)
+    gauge = _render_gauge_panel(total_a, total_b)
+
+    W = _BANNER_W
+    H = _TOP_H + _V_GAP + _GAUGE_H
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    canvas.alpha_composite(top, (0, 0))
+    canvas.alpha_composite(gauge, (0, _TOP_H + _V_GAP))
 
     buf = io.BytesIO()
-    final.save(buf, format="PNG")
+    canvas.save(buf, format="PNG")
     buf.seek(0)
-    return discord.File(buf, filename=_GAUGE_FILENAME)
+    return discord.File(buf, filename=_BANNER_FILENAME)
 
 
 async def generate_bet_embed(topic, opt_a, opt_b, status="active", logo_a=None, logo_b=None):
-    """(embed, files) 튜플을 반환한다. files 를 send/edit 시 함께 첨부해야 게이지·썸네일이 보인다.
+    """(embed, files) 튜플을 반환한다. files 를 send/edit 시 함께 첨부해야 배너 이미지가 보인다.
 
-    logo_a/logo_b 를 넘기면(e스포츠 자동생성 예측) 두 팀 로고를 합친 썸네일을 쓰고,
-    없거나 다운로드 실패 시 기본 VS 뱃지로 대체한다.
+    logo_a/logo_b 를 넘기면(e스포츠 자동생성 예측) 두 팀 로고를 크게 띄우고,
+    없거나 다운로드 실패 시 기본 VS 패널로 대체한다.
     """
     totals = await local_get_bet_totals(topic)
     total_a = totals['A']
     total_b = totals['B']
     total_pool = total_a + total_b
 
-    gauge_file = generate_gauge_image(total_a, total_b)
+    banner_file = await build_predict_banner(total_a, total_b, logo_a, logo_b)
 
     dist_pool = total_pool * 0.95
     odds_a = round(dist_pool / total_a, 2) if total_a > 0 else 1.00
@@ -311,18 +325,9 @@ async def generate_bet_embed(topic, opt_a, opt_b, status="active", logo_a=None, 
     embed.add_field(name=f"🟦 옵션 B: {opt_b}", value=f"📊 배당률: {odds_b}배\n(누적: {format_num(total_b)}P)", inline=True)
 
     embed.add_field(name="현재 베팅 비율", value=f"💰 총 상금 풀: {format_num(total_pool)}P (수수료 5% 제외 후 분배)", inline=False)
-    embed.set_image(url=f"attachment://{_GAUGE_FILENAME}")
+    embed.set_image(url=f"attachment://{_BANNER_FILENAME}")
 
-    thumb_file = None
-    if logo_a and logo_b:
-        thumb_file = await build_team_thumb(logo_a, logo_b)
-    if thumb_file is None:
-        thumb_file = _thumb_file()
-        embed.set_thumbnail(url=f"attachment://{_THUMB_FILENAME}")
-    else:
-        embed.set_thumbnail(url=f"attachment://{_TEAM_THUMB_FILENAME}")
-
-    return embed, [gauge_file, thumb_file]
+    return embed, [banner_file]
 
 class BetInputModal(discord.ui.Modal):
     def __init__(self, topic: str, option: str, opt_name: str, view: discord.ui.View):
@@ -341,41 +346,45 @@ class BetInputModal(discord.ui.Modal):
         self.add_item(self.amount)
 
     async def on_submit(self, interaction: discord.Interaction):
+        # 팀 로고 다운로드 등으로 임베드 재생성이 3초를 넘길 수 있어 먼저 defer 한다.
+        # (안 하면 "상호작용 실패"가 뜬다 — 베팅 자체는 처리돼도 응답을 못 보내서 실패로 보임)
+        await interaction.response.defer(ephemeral=True)
+
         try:
             bet_amount = int(self.amount.value)
         except ValueError:
-            return await interaction.response.send_message("❌ 올바른 숫자를 입력해주세요.", ephemeral=True)
+            return await interaction.followup.send("❌ 올바른 숫자를 입력해주세요.", ephemeral=True)
 
         if bet_amount <= 0:
-            return await interaction.response.send_message("❌ 1P 이상 베팅해야 합니다.", ephemeral=True)
+            return await interaction.followup.send("❌ 1P 이상 베팅해야 합니다.", ephemeral=True)
 
         user_id = interaction.user.id
 
         # 마감/취소된 뒤에 열어둔 모달로 제출하면 포인트만 빠져나가므로 여기서도 막는다.
         session = await local_get_bet_session(self.topic)
         if not session:
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "❌ 사라진 예측입니다.", ephemeral=True)
         if session['status'] != 'active':
             label = {"closed": "마감된", "cancelled": "취소된", "finished": "정산이 끝난"}.get(
                 session['status'], "진행 중이 아닌")
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 f"❌ 이미 {label} 예측이라 베팅할 수 없습니다.", ephemeral=True)
 
         existing_bet = await local_get_user_bet(self.topic, user_id)
         if existing_bet and existing_bet[0] != self.option:
-            return await interaction.response.send_message("❌ 이미 반대쪽 옵션에 베팅하셨습니다! 양방향 베팅은 불가능합니다.", ephemeral=True)
+            return await interaction.followup.send("❌ 이미 반대쪽 옵션에 베팅하셨습니다! 양방향 베팅은 불가능합니다.", ephemeral=True)
 
         success = await spend_points(user_id, bet_amount)
         if not success:
             current = await get_points(user_id)
-            return await interaction.response.send_message(f"❌ 포인트가 부족합니다! (현재 보유: {format_num(current)}P)", ephemeral=True)
+            return await interaction.followup.send(f"❌ 포인트가 부족합니다! (현재 보유: {format_num(current)}P)", ephemeral=True)
 
         ok = await local_add_bet_record(self.topic, user_id, self.option, bet_amount)
         if not ok:
             # 반대쪽에 이미 베팅된 상태(동시 클릭 등). 차감한 포인트를 되돌린다.
             await add_points(user_id, bet_amount)
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "❌ 이미 반대쪽 옵션에 베팅되어 있습니다. 포인트는 돌려드렸습니다.", ephemeral=True)
 
         session = await local_get_bet_session(self.topic)
@@ -384,7 +393,7 @@ class BetInputModal(discord.ui.Modal):
             logo_a=session['logo_a'], logo_b=session['logo_b'])
 
         await interaction.message.edit(embed=new_embed, view=self.view, attachments=gauge_files)
-        await interaction.response.send_message(f"✅ 성공적으로 `{format_num(bet_amount)}P`를 베팅했습니다!", ephemeral=True)
+        await interaction.followup.send(f"✅ 성공적으로 `{format_num(bet_amount)}P`를 베팅했습니다!", ephemeral=True)
 
 class BettingView(discord.ui.View):
     def __init__(self, topic: str, opt_a_name: str, opt_b_name: str, disabled: bool = False):

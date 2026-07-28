@@ -168,12 +168,15 @@ class EsportsCog(commands.Cog):
                 continue
 
             try:
-                embed, gauge_files = await generate_bet_embed(topic, a["name"], b["name"], "active")
+                logo_a, logo_b = a.get("image"), b.get("image")
+                embed, gauge_files = await generate_bet_embed(
+                    topic, a["name"], b["name"], "active", logo_a=logo_a, logo_b=logo_b)
                 embed.set_footer(text=f"{league} · 경기 시작 시각에 자동 마감됩니다")
                 view = BettingView(topic, a["name"], b["name"])
                 msg = await channel.send(embed=embed, view=view, files=gauge_files)
 
-                await local_create_bet_session(topic, a["name"], b["name"], msg.id, channel.id)
+                await local_create_bet_session(topic, a["name"], b["name"], msg.id, channel.id,
+                                               logo_a=logo_a, logo_b=logo_b)
                 # 경기 시작 시각에 기존 마감 스케줄러가 자동으로 닫아준다.
                 await local_set_bet_close_time(topic, start)
                 await mark_posted(match_id, topic, league, ev["startTime"],
@@ -248,8 +251,9 @@ class EsportsCog(commands.Cog):
             await channel.send(embed=embed)
             # 원본 예측 메시지도 정리
             msg = await channel.fetch_message(session["message_id"])
-            closed, gauge_files = await generate_bet_embed(row["topic"], session["option_a"],
-                                                            session["option_b"], "closed")
+            closed, gauge_files = await generate_bet_embed(
+                row["topic"], session["option_a"], session["option_b"], "closed",
+                logo_a=session["logo_a"], logo_b=session["logo_b"])
             await msg.edit(embed=closed, view=None, attachments=gauge_files)
         except Exception as e:
             print(f"🚨 [e스포츠] 결과 안내 실패: {e}")

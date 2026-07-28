@@ -68,7 +68,9 @@ class PredictCog(commands.Cog):
                 msg = await channel.fetch_message(bet['message_id'])
 
                 view = BettingView(topic, bet['option_a'], bet['option_b'], disabled=True)
-                embed, gauge_files = await generate_bet_embed(topic, bet['option_a'], bet['option_b'], "closed")
+                embed, gauge_files = await generate_bet_embed(
+                    topic, bet['option_a'], bet['option_b'], "closed",
+                    logo_a=bet['logo_a'], logo_b=bet['logo_b'])
 
                 await msg.edit(embed=embed, view=view, attachments=gauge_files)
                 await channel.send(f"⏰ 예약된 시간이 되어 [{topic}] 예측이 자동으로 마감되었습니다!")
@@ -84,6 +86,12 @@ class PredictCog(commands.Cog):
                          (topic TEXT PRIMARY KEY, option_a TEXT, option_b TEXT, status TEXT, message_id INTEGER, channel_id INTEGER, close_at REAL)''')
             await db.execute('''CREATE TABLE IF NOT EXISTS betting_records
                          (topic TEXT, user_id INTEGER, option TEXT, amount INTEGER, PRIMARY KEY (topic, user_id))''')
+            # 예전 DB에는 없던 컬럼 — e스포츠 팀 로고 썸네일용. 이미 있으면 조용히 무시.
+            for col in ("logo_a TEXT", "logo_b TEXT"):
+                try:
+                    await db.execute(f"ALTER TABLE betting_sessions ADD COLUMN {col}")
+                except aiosqlite.OperationalError:
+                    pass
             await db.commit()
 
     @app_commands.command(name="예측생성", description="새로운 예측을 생성합니다. (관리자 전용)")
@@ -119,7 +127,9 @@ class PredictCog(commands.Cog):
             msg = await channel.fetch_message(session['message_id'])
 
             view = BettingView(주제, session['option_a'], session['option_b'], disabled=True)
-            embed, gauge_files = await generate_bet_embed(주제, session['option_a'], session['option_b'], "closed")
+            embed, gauge_files = await generate_bet_embed(
+                주제, session['option_a'], session['option_b'], "closed",
+                logo_a=session['logo_a'], logo_b=session['logo_b'])
 
             await msg.edit(embed=embed, view=view, attachments=gauge_files)
         except Exception as e:

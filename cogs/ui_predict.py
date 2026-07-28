@@ -1,6 +1,8 @@
+import asyncio
 import io
 import os
 
+import aiohttp
 import discord
 import time
 import aiosqlite
@@ -34,10 +36,12 @@ async def local_update_bet_status(topic, status):
         await db.execute("UPDATE betting_sessions SET status = ? WHERE topic = ?", (status, topic))
         await db.commit()
 
-async def local_create_bet_session(topic, opt_a, opt_b, msg_id, ch_id):
+async def local_create_bet_session(topic, opt_a, opt_b, msg_id, ch_id, logo_a=None, logo_b=None):
     async with aiosqlite.connect(PREDICT_DB_PATH) as db:
-        await db.execute("INSERT INTO betting_sessions (topic, option_a, option_b, status, message_id, channel_id) VALUES (?, ?, ?, 'active', ?, ?)",
-                         (topic, opt_a, opt_b, msg_id, ch_id))
+        await db.execute(
+            "INSERT INTO betting_sessions (topic, option_a, option_b, status, message_id, channel_id, logo_a, logo_b) "
+            "VALUES (?, ?, ?, 'active', ?, ?, ?, ?)",
+            (topic, opt_a, opt_b, msg_id, ch_id, logo_a, logo_b))
         await db.commit()
 
 async def local_add_bet_record(topic, user_id, option, amount) -> bool:
@@ -129,6 +133,74 @@ def _thumb_file() -> discord.File:
     return discord.File(_THUMB_PATH, filename=_THUMB_FILENAME)
 
 
+# 팀 로고 썸네일 (e스포츠 자동생성 예측 전용 — 팀 이미지 URL이 있을 때만 시도)
+_TEAM_THUMB_FILENAME = "team_thumb.png"
+_TEAM_THUMB_W, _TEAM_THUMB_H = 256, 256
+
+
+async def _fetch_logo(session: aiohttp.ClientSession, url: str) -> Image.Image:
+    async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
+        r.raise_for_status()
+        data = await r.read()
+    return Image.open(io.BytesIO(data)).convert("RGBA")
+
+
+def _fit_center(logo: Image.Image, box_w: int, box_h: int, pad: int = 18) -> Image.Image:
+    aw, ah = box_w - pad * 2, box_h - pad * 2
+    lw, lh = logo.size
+    scale = min(aw / lw, ah / lh)
+    nw, nh = max(1, int(lw * scale)), max(1, int(lh * scale))
+    resized = logo.resize((nw, nh), Image.LANCZOS)
+    out = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
+    out.paste(resized, ((box_w - nw) // 2, (box_h - nh) // 2), resized)
+    return out
+
+
+async def build_team_thumb(logo_a_url: str, logo_b_url: str) -> discord.File | None:
+    """양쪽 팀 로고를 좌우로 합쳐 VS 뱃지를 얹은 썸네일을 만든다. 실패하면 None."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            logo_a, logo_b = await asyncio.gather(
+                _fetch_logo(session, logo_a_url), _fetch_logo(session, logo_b_url))
+    except Exception as e:
+        print(f"🚨 [승부예측] 팀 로고 다운로드 실패: {e}")
+        return None
+
+    W, H = _TEAM_THUMB_W, _TEAM_THUMB_H
+    canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    left_bg = Image.new("RGBA", (W // 2, H), (*_RED[:3], 40))
+    right_bg = Image.new("RGBA", (W // 2, H), (*_BLUE[:3], 40))
+    canvas.paste(left_bg, (0, 0), left_bg)
+    canvas.paste(right_bg, (W // 2, 0), right_bg)
+    canvas.alpha_composite(_fit_center(logo_a, W // 2, H), (0, 0))
+    canvas.alpha_composite(_fit_center(logo_b, W // 2, H), (W // 2, 0))
+
+    ImageDraw.Draw(canvas).line([(W // 2, 0), (W // 2, H)], fill=(255, 255, 255, 160), width=3)
+
+    badge_r = 34
+    cx, cy = W // 2, H // 2
+    badge = Image.new("RGBA", (badge_r * 2, badge_r * 2), (0, 0, 0, 0))
+    bdraw = ImageDraw.Draw(badge)
+    bdraw.ellipse([0, 0, badge_r * 2, badge_r * 2], fill=(30, 30, 34, 235),
+                 outline=(255, 255, 255, 235), width=4)
+    font = ImageFont.truetype("font.ttf", 30)
+    txt = "VS"
+    bbox = bdraw.textbbox((0, 0), txt, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    bdraw.text((badge_r - tw / 2, badge_r - th / 2 - bbox[1]), txt, font=font, fill=(255, 255, 255, 255))
+    canvas.alpha_composite(badge, (cx - badge_r, cy - badge_r))
+
+    mask = Image.new("L", (W, H), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, W - 1, H - 1], radius=24, fill=255)
+    final = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    final.paste(canvas, (0, 0), mask)
+
+    buf = io.BytesIO()
+    final.save(buf, format="PNG")
+    buf.seek(0)
+    return discord.File(buf, filename=_TEAM_THUMB_FILENAME)
+
+
 def _gauge_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype("font_ui.ttf", size)
 
@@ -208,8 +280,12 @@ def generate_gauge_image(total_a: int, total_b: int) -> discord.File:
     return discord.File(buf, filename=_GAUGE_FILENAME)
 
 
-async def generate_bet_embed(topic, opt_a, opt_b, status="active"):
-    """(embed, files) 튜플을 반환한다. files 를 send/edit 시 함께 첨부해야 게이지·썸네일이 보인다."""
+async def generate_bet_embed(topic, opt_a, opt_b, status="active", logo_a=None, logo_b=None):
+    """(embed, files) 튜플을 반환한다. files 를 send/edit 시 함께 첨부해야 게이지·썸네일이 보인다.
+
+    logo_a/logo_b 를 넘기면(e스포츠 자동생성 예측) 두 팀 로고를 합친 썸네일을 쓰고,
+    없거나 다운로드 실패 시 기본 VS 뱃지로 대체한다.
+    """
     totals = await local_get_bet_totals(topic)
     total_a = totals['A']
     total_b = totals['B']
@@ -236,9 +312,17 @@ async def generate_bet_embed(topic, opt_a, opt_b, status="active"):
 
     embed.add_field(name="현재 베팅 비율", value=f"💰 총 상금 풀: {format_num(total_pool)}P (수수료 5% 제외 후 분배)", inline=False)
     embed.set_image(url=f"attachment://{_GAUGE_FILENAME}")
-    embed.set_thumbnail(url=f"attachment://{_THUMB_FILENAME}")
 
-    return embed, [gauge_file, _thumb_file()]
+    thumb_file = None
+    if logo_a and logo_b:
+        thumb_file = await build_team_thumb(logo_a, logo_b)
+    if thumb_file is None:
+        thumb_file = _thumb_file()
+        embed.set_thumbnail(url=f"attachment://{_THUMB_FILENAME}")
+    else:
+        embed.set_thumbnail(url=f"attachment://{_TEAM_THUMB_FILENAME}")
+
+    return embed, [gauge_file, thumb_file]
 
 class BetInputModal(discord.ui.Modal):
     def __init__(self, topic: str, option: str, opt_name: str, view: discord.ui.View):
@@ -296,7 +380,8 @@ class BetInputModal(discord.ui.Modal):
 
         session = await local_get_bet_session(self.topic)
         new_embed, gauge_files = await generate_bet_embed(
-            self.topic, session['option_a'], session['option_b'], session['status'])
+            self.topic, session['option_a'], session['option_b'], session['status'],
+            logo_a=session['logo_a'], logo_b=session['logo_b'])
 
         await interaction.message.edit(embed=new_embed, view=self.view, attachments=gauge_files)
         await interaction.response.send_message(f"✅ 성공적으로 `{format_num(bet_amount)}P`를 베팅했습니다!", ephemeral=True)
